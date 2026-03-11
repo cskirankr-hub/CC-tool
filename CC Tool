@@ -1,0 +1,811 @@
+import { useState, useMemo, useRef } from "react";
+
+const TODAY = new Date("2026-03-11");
+const FY = "2025–26";
+
+const CATS = {
+  MCA:  { color: "#4f46e5", light: "#eef2ff", label: "MCA / Companies Act 2013" },
+  LODR: { color: "#0284c7", light: "#e0f2fe", label: "SEBI LODR 2015" },
+  PIT:  { color: "#7c3aed", light: "#f5f3ff", label: "SEBI PIT 2015" },
+  SAST: { color: "#be185d", light: "#fdf2f8", label: "SEBI SAST 2011" },
+};
+
+const ST = {
+  done:     { label: "Completed",  icon: "✓", color: "#059669", bg: "#d1fae5" },
+  pending:  { label: "Pending",    icon: "⏳", color: "#d97706", bg: "#fef3c7" },
+  overdue:  { label: "Overdue",    icon: "⚠", color: "#dc2626", bg: "#fee2e2" },
+  upcoming: { label: "Upcoming",   icon: "◷", color: "#4f46e5", bg: "#eef2ff" },
+  na:       { label: "N/A",        icon: "—",  color: "#94a3b8", bg: "#f1f5f9" },
+};
+
+const FREQS = ["Annual","Half-yearly","Quarterly","Monthly","Event-based","Ongoing","One-time"];
+
+const seed = [
+  {id:1,  cat:"MCA",  task:"Annual Return MGT-7A",             ref:"Sec.92, CA2013",           due:"2025-11-29",freq:"Annual",      status:"done",    remarks:"Filed 28-Nov-2025"},
+  {id:2,  cat:"MCA",  task:"Financial Statements AOC-4",       ref:"Sec.137, CA2013",          due:"2025-10-29",freq:"Annual",      status:"done",    remarks:"Filed within timeline"},
+  {id:3,  cat:"MCA",  task:"DIR-3 KYC (All Directors)",        ref:"Rule 12A, CA Rules",       due:"2025-09-30",freq:"Annual",      status:"done",    remarks:"All 6 directors complied"},
+  {id:4,  cat:"MCA",  task:"MGT-14 – Board Resolutions Q4",    ref:"Sec.117, CA2013",          due:"2026-03-30",freq:"Event-based", status:"pending", remarks:"Q4 resolutions to be filed"},
+  {id:5,  cat:"MCA",  task:"Form ADT-1 – Auditor Appt.",       ref:"Sec.139, CA2013",          due:"2026-04-15",freq:"Annual",      status:"upcoming",remarks:"Post-AGM filing"},
+  {id:6,  cat:"MCA",  task:"MSME Form-1 (H2 FY26)",            ref:"Sec.405, CA2013",          due:"2026-04-30",freq:"Half-yearly", status:"upcoming",remarks:"Due Apr 2026"},
+  {id:7,  cat:"MCA",  task:"DPT-3 – Return of Deposits",       ref:"Rule 16, CA Rules",        due:"2026-06-30",freq:"Annual",      status:"upcoming",remarks:"FY 2025-26 filing"},
+  {id:8,  cat:"LODR", task:"Board Meeting Outcome (Reg.30)",   ref:"SEBI LODR Reg.30",         due:"2026-02-14",freq:"Quarterly",   status:"done",    remarks:"Q3 results disclosed"},
+  {id:9,  cat:"LODR", task:"Quarterly Results (Reg.33)",       ref:"SEBI LODR Reg.33",         due:"2026-02-14",freq:"Quarterly",   status:"done",    remarks:"Q3 FY26 submitted"},
+  {id:10, cat:"LODR", task:"Corporate Governance Report Q4",   ref:"SEBI LODR Reg.27(2)",      due:"2026-04-21",freq:"Quarterly",   status:"upcoming",remarks:"Q4 report due"},
+  {id:11, cat:"LODR", task:"Shareholding Pattern Q4 (Reg.31)", ref:"SEBI LODR Reg.31",         due:"2026-04-21",freq:"Quarterly",   status:"upcoming",remarks:"Q4 pattern due"},
+  {id:12, cat:"LODR", task:"Annual Report Upload (Reg.34)",    ref:"SEBI LODR Reg.34",         due:"2026-05-31",freq:"Annual",      status:"upcoming",remarks:"Post-AGM upload"},
+  {id:13, cat:"LODR", task:"RPT Disclosure H2 (Reg.23(9))",   ref:"SEBI LODR Reg.23(9)",      due:"2026-05-21",freq:"Half-yearly", status:"upcoming",remarks:"H2 FY26 disclosure"},
+  {id:14, cat:"LODR", task:"Reg.40(9) Share Transfer Cert.",   ref:"SEBI LODR Reg.40(9)",      due:"2026-04-30",freq:"Half-yearly", status:"upcoming",remarks:"PCS certificate pending"},
+  {id:15, cat:"LODR", task:"XBRL Financial Statements",        ref:"SEBI Circular CFD",        due:"2026-06-30",freq:"Annual",      status:"upcoming",remarks:"Annual XBRL filing"},
+  {id:16, cat:"LODR", task:"Secretarial Compliance Report",    ref:"SEBI Cir./2019/140",       due:"2026-05-30",freq:"Annual",      status:"upcoming",remarks:"Annual SC Report"},
+  {id:17, cat:"PIT",  task:"Trading Window Closure Q4",        ref:"SEBI PIT Reg.9",           due:"2026-03-25",freq:"Quarterly",   status:"pending", remarks:"Notice to designated persons"},
+  {id:18, cat:"PIT",  task:"UPSI Disclosure – Stock Exch.",    ref:"SEBI PIT Reg.2(1)(n)",     due:"2026-03-15",freq:"Event-based", status:"overdue", remarks:"Price sensitive info pending"},
+  {id:19, cat:"PIT",  task:"Form C – Annual Disclosure",       ref:"SEBI PIT Reg.7(2)(a)",     due:"2026-04-30",freq:"Annual",      status:"upcoming",remarks:"Designated persons' annual disc."},
+  {id:20, cat:"PIT",  task:"Code of Conduct Annual Review",    ref:"SEBI PIT Reg.9",           due:"2026-03-31",freq:"Annual",      status:"pending", remarks:"Board approval needed"},
+  {id:21, cat:"PIT",  task:"SDD Compliance (Reg.9A)",          ref:"SEBI PIT Reg.9A",          due:"2026-03-31",freq:"Annual",      status:"pending", remarks:"Structured Digital Database"},
+  {id:22, cat:"SAST", task:"Continual Disclosures (Reg.30)",   ref:"SEBI SAST Reg.30",         due:"2026-04-15",freq:"Annual",      status:"upcoming",remarks:"Promoter holding >25%"},
+  {id:23, cat:"SAST", task:"Promoter Holding Recon. (Reg.31)", ref:"SEBI SAST Reg.31",         due:"2026-04-15",freq:"Annual",      status:"upcoming",remarks:"FY2025-26 annual disc."},
+  {id:24, cat:"SAST", task:"Event-based Disc. (Reg.29)",       ref:"SEBI SAST Reg.29",         due:"2026-03-20",freq:"Event-based", status:"done",    remarks:"Last transaction disclosed"},
+  {id:25, cat:"SAST", task:"Creeping Acquisition Monitoring",  ref:"SEBI SAST Reg.3(2)",       due:"2026-03-31",freq:"Ongoing",     status:"pending", remarks:"Q4 monitoring review"},
+];
+
+const blankForm = () => ({ cat:"MCA", task:"", ref:"", due:"", freq:"Annual", status:"upcoming", remarks:"" });
+
+const daysFrom  = d => Math.ceil((new Date(d) - TODAY) / 86400000);
+const fmtDate   = d => { try { return new Date(d).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"}); } catch{ return d||"—"; } };
+const uid       = () => Date.now() + Math.random();
+
+// ── MINI UI ──────────────────────────────────────────────────────────────────
+const Badge = ({ cat }) => (
+  <span style={{background:CATS[cat]?.light||"#f1f5f9",color:CATS[cat]?.color||"#64748b",
+    borderRadius:5,padding:"2px 9px",fontSize:10,fontWeight:700,letterSpacing:"0.3px",whiteSpace:"nowrap"}}>{cat}</span>
+);
+const Pill = ({ s }) => {
+  const c = ST[s]||ST.upcoming;
+  return <span style={{background:c.bg,color:c.color,borderRadius:6,padding:"3px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>{c.icon} {c.label}</span>;
+};
+const DaysChip = ({ due, status }) => {
+  if (["done","filed","na"].includes(status)) return <span style={{color:"#94a3b8",fontSize:12}}>—</span>;
+  const d = daysFrom(due);
+  const col = d<0?"#dc2626":d<=7?"#d97706":d<=30?"#4f46e5":"#059669";
+  return <span style={{fontWeight:700,fontSize:12,color:col}}>{d<0?`${Math.abs(d)}d late`:`${d}d`}</span>;
+};
+const CircleG = ({ pct, size=64, w=6 }) => {
+  const r=(size-w)/2, ci=2*Math.PI*r, off=ci-(pct/100)*ci;
+  const col=pct>=75?"#059669":pct>=45?"#d97706":"#dc2626";
+  return (
+    <svg width={size} height={size} style={{transform:"rotate(-90deg)"}}>
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#e2e8f0" strokeWidth={w}/>
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={col} strokeWidth={w}
+        strokeDasharray={ci} strokeDashoffset={off} strokeLinecap="round" style={{transition:"stroke-dashoffset 0.9s"}}/>
+    </svg>
+  );
+};
+
+const inputStyle = {
+  border:"1.5px solid #e2e8f0", borderRadius:8, padding:"8px 11px",
+  fontSize:12, width:"100%", background:"#fff", color:"#1e293b", outline:"none",
+  fontFamily:"'Outfit',sans-serif", transition:"border-color 0.15s"
+};
+const labelStyle = { fontSize:10, fontWeight:700, color:"#64748b", letterSpacing:"0.5px", textTransform:"uppercase", display:"block", marginBottom:4 };
+
+// ── MODAL ─────────────────────────────────────────────────────────────────────
+function ComplianceModal({ form, setForm, onSave, onClose, isEdit }) {
+  const f = (field, val) => setForm(p => ({...p, [field]: val}));
+  const ok = form.task.trim() && form.ref.trim() && form.due;
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(10,10,30,0.55)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(3px)"}}
+      onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{background:"#fff",borderRadius:20,width:"min(620px,95vw)",maxHeight:"90vh",overflowY:"auto",
+        boxShadow:"0 24px 64px rgba(0,0,0,0.22)",animation:"slideUp 0.2s ease"}}>
+        {/* Modal header */}
+        <div style={{background:"linear-gradient(135deg,#1e1b4b,#312e81)",padding:"22px 28px",borderRadius:"20px 20px 0 0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <div style={{color:"#fff",fontWeight:800,fontSize:17}}>{isEdit?"✏️ Edit Compliance":"➕ Add New Compliance"}</div>
+            <div style={{color:"#a5b4fc",fontSize:11,marginTop:2}}>{isEdit?"Modify compliance details below":"Fill in the details to add a new compliance item"}</div>
+          </div>
+          <button onClick={onClose} style={{background:"rgba(255,255,255,0.15)",border:"none",color:"#fff",width:32,height:32,
+            borderRadius:8,cursor:"pointer",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+        </div>
+        {/* Fields */}
+        <div style={{padding:"26px 28px",display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+          {/* Category */}
+          <div>
+            <label style={labelStyle}>Regulation Category *</label>
+            <select value={form.cat} onChange={e=>f("cat",e.target.value)} style={{...inputStyle}}>
+              {Object.entries(CATS).map(([k,v])=><option key={k} value={k}>{k} — {v.label}</option>)}
+            </select>
+          </div>
+          {/* Frequency */}
+          <div>
+            <label style={labelStyle}>Frequency *</label>
+            <select value={form.freq} onChange={e=>f("freq",e.target.value)} style={{...inputStyle}}>
+              {FREQS.map(fr=><option key={fr} value={fr}>{fr}</option>)}
+            </select>
+          </div>
+          {/* Task – full width */}
+          <div style={{gridColumn:"1/-1"}}>
+            <label style={labelStyle}>Compliance Task / Title *</label>
+            <input value={form.task} onChange={e=>f("task",e.target.value)}
+              placeholder="e.g. Annual Return MGT-7A" style={{...inputStyle}}
+              onFocus={e=>e.target.style.borderColor="#4f46e5"} onBlur={e=>e.target.style.borderColor="#e2e8f0"}/>
+          </div>
+          {/* Reference */}
+          <div style={{gridColumn:"1/-1"}}>
+            <label style={labelStyle}>Provision / Regulation Reference *</label>
+            <input value={form.ref} onChange={e=>f("ref",e.target.value)}
+              placeholder="e.g. Sec.92, Companies Act 2013" style={{...inputStyle}}
+              onFocus={e=>e.target.style.borderColor="#4f46e5"} onBlur={e=>e.target.style.borderColor="#e2e8f0"}/>
+          </div>
+          {/* Due date */}
+          <div>
+            <label style={labelStyle}>Due Date *</label>
+            <input type="date" value={form.due} onChange={e=>f("due",e.target.value)} style={{...inputStyle}}
+              onFocus={e=>e.target.style.borderColor="#4f46e5"} onBlur={e=>e.target.style.borderColor="#e2e8f0"}/>
+          </div>
+          {/* Status */}
+          <div>
+            <label style={labelStyle}>Current Status *</label>
+            <select value={form.status} onChange={e=>f("status",e.target.value)} style={{...inputStyle}}>
+              {Object.entries(ST).map(([k,v])=><option key={k} value={k}>{v.icon} {v.label}</option>)}
+            </select>
+          </div>
+          {/* Remarks – full width */}
+          <div style={{gridColumn:"1/-1"}}>
+            <label style={labelStyle}>Remarks / Notes</label>
+            <textarea value={form.remarks} onChange={e=>f("remarks",e.target.value)} rows={2}
+              placeholder="Optional notes, action owner, reference filing number..."
+              style={{...inputStyle, resize:"vertical", lineHeight:1.5}}
+              onFocus={e=>e.target.style.borderColor="#4f46e5"} onBlur={e=>e.target.style.borderColor="#e2e8f0"}/>
+          </div>
+        </div>
+        {/* Preview pill */}
+        {form.cat && form.status && (
+          <div style={{padding:"0 28px 8px",display:"flex",gap:8,alignItems:"center"}}>
+            <span style={{fontSize:11,color:"#94a3b8"}}>Preview:</span>
+            <Badge cat={form.cat}/>
+            <Pill s={form.status}/>
+            {form.due && <DaysChip due={form.due} status={form.status}/>}
+          </div>
+        )}
+        {/* Footer */}
+        <div style={{padding:"16px 28px 24px",display:"flex",justifyContent:"flex-end",gap:10,borderTop:"1px solid #f1f5f9"}}>
+          <button onClick={onClose} style={{padding:"9px 22px",borderRadius:9,border:"1.5px solid #e2e8f0",
+            background:"#fff",color:"#64748b",fontWeight:600,cursor:"pointer",fontSize:13}}>Cancel</button>
+          <button onClick={onSave} disabled={!ok}
+            style={{padding:"9px 22px",borderRadius:9,border:"none",fontWeight:700,cursor:ok?"pointer":"not-allowed",fontSize:13,
+              background:ok?"linear-gradient(135deg,#4f46e5,#7c3aed)":"#e2e8f0",color:ok?"#fff":"#94a3b8",
+              transition:"all 0.15s"}}>
+            {isEdit?"💾 Save Changes":"➕ Add Compliance"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── DELETE CONFIRM ────────────────────────────────────────────────────────────
+function DeleteConfirm({ item, onConfirm, onClose }) {
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(10,10,30,0.55)",zIndex:1001,display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(3px)"}}>
+      <div style={{background:"#fff",borderRadius:16,width:"min(400px,90vw)",padding:28,boxShadow:"0 16px 48px rgba(0,0,0,0.2)",animation:"slideUp 0.18s ease"}}>
+        <div style={{fontSize:36,textAlign:"center",marginBottom:12}}>🗑️</div>
+        <div style={{fontWeight:800,fontSize:16,color:"#1e293b",textAlign:"center",marginBottom:8}}>Delete Compliance?</div>
+        <div style={{fontSize:12,color:"#64748b",textAlign:"center",marginBottom:6}}>This action cannot be undone.</div>
+        <div style={{background:"#fef2f2",border:"1px solid #fecaca",borderRadius:10,padding:"10px 14px",marginBottom:20,textAlign:"center"}}>
+          <div style={{fontWeight:700,fontSize:13,color:"#991b1b"}}>{item.task}</div>
+          <div style={{fontSize:11,color:"#dc2626",marginTop:3}}><Badge cat={item.cat}/></div>
+        </div>
+        <div style={{display:"flex",gap:10}}>
+          <button onClick={onClose} style={{flex:1,padding:"10px",borderRadius:9,border:"1.5px solid #e2e8f0",background:"#fff",color:"#64748b",fontWeight:600,cursor:"pointer",fontSize:13}}>Cancel</button>
+          <button onClick={onConfirm} style={{flex:1,padding:"10px",borderRadius:9,border:"none",background:"#dc2626",color:"#fff",fontWeight:700,cursor:"pointer",fontSize:13}}>Delete</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── INLINE EDIT CELL ──────────────────────────────────────────────────────────
+function EditCell({ value, onChange, type="text", options }) {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(value);
+  const ref = useRef();
+
+  const commit = () => { onChange(val); setEditing(false); };
+  if (!editing) return (
+    <span onClick={()=>setEditing(true)}
+      style={{cursor:"text",borderRadius:5,padding:"2px 5px",display:"inline-block",
+        border:"1px dashed transparent",transition:"border-color 0.15s",minWidth:40,
+        fontSize:12,color:"#374151"}}
+      onMouseEnter={e=>e.target.style.borderColor="#cbd5e1"}
+      onMouseLeave={e=>e.target.style.borderColor="transparent"}>
+      {value||<span style={{color:"#94a3b8",fontStyle:"italic"}}>click to edit</span>}
+    </span>
+  );
+  if (options) return (
+    <select ref={ref} autoFocus value={val} onChange={e=>setVal(e.target.value)} onBlur={commit}
+      style={{border:"1.5px solid #4f46e5",borderRadius:6,padding:"3px 6px",fontSize:11,background:"#fff",outline:"none"}}>
+      {options.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
+    </select>
+  );
+  if (type==="date") return (
+    <input ref={ref} autoFocus type="date" value={val} onChange={e=>setVal(e.target.value)} onBlur={commit}
+      onKeyDown={e=>e.key==="Enter"&&commit()}
+      style={{border:"1.5px solid #4f46e5",borderRadius:6,padding:"3px 7px",fontSize:11,outline:"none"}}/>
+  );
+  return (
+    <input ref={ref} autoFocus value={val} onChange={e=>setVal(e.target.value)} onBlur={commit}
+      onKeyDown={e=>e.key==="Enter"&&commit()}
+      style={{border:"1.5px solid #4f46e5",borderRadius:6,padding:"3px 7px",fontSize:11,outline:"none",width:"100%",minWidth:120}}/>
+  );
+}
+
+// ── MAIN ──────────────────────────────────────────────────────────────────────
+export default function App() {
+  const [tab, setTab]           = useState("dash");
+  const [rows, setRows]         = useState(seed);
+  const [modal, setModal]       = useState(null); // null | "add" | {id}
+  const [delItem, setDelItem]   = useState(null);
+  const [form, setForm]         = useState(blankForm());
+  const [tCat, setTCat]         = useState("ALL");
+  const [tSt,  setTSt]          = useState("ALL");
+  const [tQ,   setTQ]           = useState("");
+  const [toast, setToast]       = useState(null);
+
+  const showToast = (msg, type="success") => {
+    setToast({msg,type});
+    setTimeout(()=>setToast(null), 2800);
+  };
+
+  const openAdd = () => { setForm(blankForm()); setModal("add"); };
+  const openEdit = row => { setForm({...row}); setModal(row.id); };
+  const closeModal = () => setModal(null);
+
+  const saveCompliance = () => {
+    if (modal === "add") {
+      const newRow = { ...form, id: uid() };
+      setRows(p => [...p, newRow]);
+      showToast(`✅ "${form.task}" added successfully`);
+    } else {
+      setRows(p => p.map(r => r.id === modal ? { ...form, id: modal } : r));
+      showToast(`💾 "${form.task}" updated successfully`);
+    }
+    closeModal();
+  };
+
+  const deleteRow = (item) => {
+    setRows(p => p.filter(r => r.id !== item.id));
+    setDelItem(null);
+    showToast(`🗑️ "${item.task}" deleted`, "error");
+  };
+
+  const updateField = (id, field, val) =>
+    setRows(p => p.map(r => r.id === id ? { ...r, [field]: val } : r));
+
+  const cs = useMemo(()=>({
+    total:    rows.length,
+    done:     rows.filter(x=>x.status==="done").length,
+    pending:  rows.filter(x=>x.status==="pending").length,
+    overdue:  rows.filter(x=>x.status==="overdue").length,
+    upcoming: rows.filter(x=>x.status==="upcoming").length,
+  }),[rows]);
+  const score = rows.length ? Math.round(cs.done/cs.total*100) : 0;
+
+  const catStats = useMemo(()=>Object.keys(CATS).map(c=>{
+    const r=rows.filter(x=>x.cat===c);
+    const done=r.filter(x=>x.status==="done").length;
+    return {c, total:r.length, done, overdue:r.filter(x=>x.status==="overdue").length,
+      pending:r.filter(x=>x.status==="pending").length,
+      score:r.length?Math.round(done/r.length*100):0};
+  }),[rows]);
+
+  const urgent = useMemo(()=>rows
+    .filter(x=>!["done","na"].includes(x.status)&&daysFrom(x.due)<=30)
+    .sort((a,b)=>daysFrom(a.due)-daysFrom(b.due)).slice(0,8), [rows]);
+
+  const filtC = useMemo(()=>rows.filter(x=>
+    (tCat==="ALL"||x.cat===tCat)&&
+    (tSt==="ALL"||x.status===tSt)&&
+    (!tQ||x.task.toLowerCase().includes(tQ.toLowerCase())||x.ref.toLowerCase().includes(tQ.toLowerCase()))
+  ),[rows,tCat,tSt,tQ]);
+
+  const card = {background:"#fff",borderRadius:16,boxShadow:"0 1px 10px rgba(0,0,0,0.07)",padding:"22px 24px"};
+  const tabBtn = (id) => ({
+    padding:"11px 20px",border:"none",cursor:"pointer",fontSize:12.5,fontWeight:600,
+    background:tab===id?"#fff":"transparent",
+    color:tab===id?"#1e1b4b":"#a5b4fc",
+    borderRadius:"8px 8px 0 0",transition:"all 0.18s",
+    borderBottom:tab===id?"3px solid #4f46e5":"3px solid transparent",whiteSpace:"nowrap"
+  });
+
+  const TH = ({children,center})=>(
+    <th style={{padding:"10px 14px",textAlign:center?"center":"left",fontSize:10,fontWeight:700,
+      color:"#94a3b8",letterSpacing:"0.6px",textTransform:"uppercase",background:"#f8fafc",
+      borderBottom:"2px solid #e2e8f0",whiteSpace:"nowrap"}}>{children}</th>
+  );
+
+  return (
+    <div style={{fontFamily:"'Outfit','DM Sans',sans-serif",background:"#f0f4f8",minHeight:"100vh",color:"#1e293b"}}>
+
+      {/* TOAST */}
+      {toast&&(
+        <div style={{position:"fixed",top:20,right:24,zIndex:2000,
+          background:toast.type==="error"?"#fef2f2":"#f0fdf4",
+          border:`1.5px solid ${toast.type==="error"?"#fecaca":"#bbf7d0"}`,
+          borderRadius:12,padding:"12px 20px",boxShadow:"0 8px 24px rgba(0,0,0,0.12)",
+          fontSize:13,fontWeight:600,color:toast.type==="error"?"#991b1b":"#166534",
+          animation:"slideIn 0.2s ease",maxWidth:360}}>
+          {toast.msg}
+        </div>
+      )}
+
+      {/* MODALS */}
+      {(modal==="add"||typeof modal==="number")&&(
+        <ComplianceModal form={form} setForm={setForm} onSave={saveCompliance}
+          onClose={closeModal} isEdit={modal!=="add"}/>
+      )}
+      {delItem&&<DeleteConfirm item={delItem} onConfirm={()=>deleteRow(delItem)} onClose={()=>setDelItem(null)}/>}
+
+      {/* TOPBAR */}
+      <div style={{background:"linear-gradient(135deg,#0f0c29,#302b63,#24243e)",boxShadow:"0 4px 24px rgba(0,0,0,0.35)"}}>
+        <div style={{maxWidth:1320,margin:"0 auto",padding:"0 28px"}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"18px 0 0"}}>
+            <div style={{display:"flex",alignItems:"center",gap:14}}>
+              <div style={{width:44,height:44,background:"linear-gradient(135deg,#6366f1,#a855f7)",
+                borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>⚖️</div>
+              <div>
+                <div style={{color:"#fff",fontWeight:800,fontSize:20,letterSpacing:"-0.5px"}}>CS Compliance Tracker</div>
+                <div style={{color:"#a5b4fc",fontSize:11,letterSpacing:"0.8px",fontWeight:500}}>LISTED COMPANY · FY {FY} · {rows.length} ITEMS TRACKED</div>
+              </div>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <div style={{background:"rgba(255,255,255,0.08)",borderRadius:10,padding:"8px 16px",textAlign:"right"}}>
+                <div style={{color:"#a5b4fc",fontSize:10,letterSpacing:"0.5px"}}>AS ON</div>
+                <div style={{color:"#fff",fontSize:13,fontWeight:700}}>11 Mar 2026</div>
+              </div>
+              {cs.overdue>0&&(
+                <div style={{background:"#dc2626",color:"#fff",borderRadius:20,padding:"6px 14px",fontSize:12,fontWeight:800,animation:"blink 1.4s infinite"}}>
+                  ⚠ {cs.overdue} OVERDUE
+                </div>
+              )}
+              <div style={{background:"rgba(255,255,255,0.08)",borderRadius:10,padding:"8px 16px",textAlign:"center"}}>
+                <div style={{color:"#a5b4fc",fontSize:10}}>SCORE</div>
+                <div style={{color:score>=75?"#4ade80":score>=50?"#fbbf24":"#f87171",fontSize:18,fontWeight:800}}>{score}%</div>
+              </div>
+              <button onClick={openAdd}
+                style={{background:"linear-gradient(135deg,#4f46e5,#7c3aed)",color:"#fff",border:"none",
+                  borderRadius:10,padding:"10px 18px",fontSize:13,fontWeight:700,cursor:"pointer",
+                  display:"flex",alignItems:"center",gap:6,whiteSpace:"nowrap",
+                  boxShadow:"0 4px 12px rgba(79,70,229,0.4)"}}>
+                ➕ Add Compliance
+              </button>
+            </div>
+          </div>
+          {/* TABS */}
+          <div style={{display:"flex",gap:2,marginTop:12,overflowX:"auto"}}>
+            {[
+              {id:"dash",  label:"📊 Dashboard"},
+              {id:"track", label:"📋 Tracker"},
+              {id:"cal",   label:"📅 Calendar"},
+              {id:"cover", label:"📄 Cover Report"},
+            ].map(t=>(
+              <button key={t.id} onClick={()=>setTab(t.id)} style={tabBtn(t.id)}>{t.label}</button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div style={{maxWidth:1320,margin:"0 auto",padding:"26px 28px"}}>
+
+        {/* ══ DASHBOARD ══ */}
+        {tab==="dash"&&(
+          <div>
+            {/* KPIs */}
+            <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:14,marginBottom:22}}>
+              {[
+                {label:"Compliance Score",val:`${score}%`,sub:`${cs.done}/${cs.total} done`,color:"#4f46e5",bg:"#eef2ff"},
+                {label:"Completed",       val:cs.done,    sub:"Filed / Done",             color:"#059669",bg:"#f0fdf4"},
+                {label:"Pending",         val:cs.pending, sub:"Action needed",            color:"#d97706",bg:"#fffbeb"},
+                {label:"Overdue",         val:cs.overdue, sub:"Immediate action!",        color:"#dc2626",bg:"#fef2f2"},
+                {label:"Upcoming 30d",    val:urgent.length,sub:"Plan ahead",             color:"#4f46e5",bg:"#eef2ff"},
+              ].map((k,i)=>(
+                <div key={i} style={{...card,border:`1.5px solid ${k.bg}`,padding:"18px 20px"}}>
+                  <div style={{fontSize:10,color:"#94a3b8",fontWeight:700,letterSpacing:"0.6px",textTransform:"uppercase"}}>{k.label}</div>
+                  <div style={{fontSize:34,fontWeight:900,color:k.color,lineHeight:1.1,marginTop:4}}>{k.val}</div>
+                  <div style={{fontSize:11,color:"#64748b",marginTop:3}}>{k.sub}</div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{display:"grid",gridTemplateColumns:"1.2fr 1fr",gap:18,marginBottom:18}}>
+              {/* Category bars */}
+              <div style={{...card}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+                  <h3 style={{margin:0,fontSize:14,fontWeight:700}}>Score by Regulation</h3>
+                  <button onClick={openAdd} style={{background:"#eef2ff",color:"#4f46e5",border:"none",borderRadius:8,
+                    padding:"6px 12px",fontSize:11,fontWeight:700,cursor:"pointer"}}>➕ Add New</button>
+                </div>
+                {catStats.map(({c,total,done,overdue,pending,score:sc})=>(
+                  <div key={c} style={{marginBottom:18}}>
+                    <div style={{display:"flex",justifyContent:"space-between",marginBottom:5,alignItems:"center"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:8}}>
+                        <span style={{fontWeight:800,color:CATS[c].color,fontSize:13}}>{c}</span>
+                        <span style={{color:"#94a3b8",fontSize:10}}>{total} items</span>
+                      </div>
+                      <div style={{display:"flex",gap:5,alignItems:"center"}}>
+                        {overdue>0&&<span style={{background:"#fee2e2",color:"#dc2626",borderRadius:8,padding:"1px 7px",fontSize:10,fontWeight:700}}>⚠{overdue}</span>}
+                        {pending>0&&<span style={{background:"#fef3c7",color:"#d97706",borderRadius:8,padding:"1px 7px",fontSize:10,fontWeight:700}}>⏳{pending}</span>}
+                        <span style={{fontWeight:800,fontSize:14,color:sc>=75?"#059669":sc>=45?"#d97706":"#dc2626"}}>{sc}%</span>
+                      </div>
+                    </div>
+                    <div style={{background:"#f1f5f9",borderRadius:99,height:9,overflow:"hidden"}}>
+                      <div style={{width:`${sc}%`,height:"100%",background:CATS[c].color,borderRadius:99,transition:"width 1s"}}/>
+                    </div>
+                    <div style={{fontSize:10,color:"#94a3b8",marginTop:3}}>✓{done} done · {total} total</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Urgent */}
+              <div style={{...card}}>
+                <h3 style={{margin:"0 0 14px",fontSize:14,fontWeight:700}}>🚨 Urgent — Next 30 Days</h3>
+                <div style={{display:"flex",flexDirection:"column",gap:7,maxHeight:320,overflowY:"auto"}}>
+                  {urgent.length===0
+                    ? <div style={{textAlign:"center",padding:40,color:"#94a3b8"}}>✅ All clear!</div>
+                    : urgent.map(t=>{
+                        const d=daysFrom(t.due);
+                        const sc=ST[t.status];
+                        return (
+                          <div key={t.id} onClick={()=>openEdit(t)}
+                            style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",
+                              borderRadius:10,background:t.status==="overdue"?"#fef2f2":"#f8fafc",
+                              border:`1px solid ${t.status==="overdue"?"#fecaca":"#e2e8f0"}`,
+                              cursor:"pointer",transition:"all 0.15s"}}
+                            onMouseEnter={e=>e.currentTarget.style.background=t.status==="overdue"?"#fee2e2":"#eff6ff"}
+                            onMouseLeave={e=>e.currentTarget.style.background=t.status==="overdue"?"#fef2f2":"#f8fafc"}>
+                            <div style={{background:sc.bg,color:sc.color,borderRadius:7,width:30,height:30,
+                              display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,flexShrink:0}}>{sc.icon}</div>
+                            <div style={{flex:1,minWidth:0}}>
+                              <div style={{fontSize:12,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.task}</div>
+                              <div style={{fontSize:10,color:"#64748b"}}>{t.cat} · {fmtDate(t.due)}</div>
+                            </div>
+                            <div style={{fontSize:12,fontWeight:800,color:d<=0?"#dc2626":d<=7?"#d97706":"#4f46e5",flexShrink:0}}>
+                              {d<=0?`${Math.abs(d)}d late`:`${d}d`}
+                            </div>
+                          </div>
+                        );
+                    })
+                  }
+                </div>
+              </div>
+            </div>
+
+            {/* Cat cards */}
+            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14}}>
+              {catStats.map(({c,total,done,overdue,pending,score:sc})=>(
+                <div key={c} onClick={()=>{setTCat(c);setTab("track");}}
+                  style={{background:`linear-gradient(135deg,${CATS[c].color}18,${CATS[c].color}05)`,
+                    border:`1.5px solid ${CATS[c].color}30`,borderRadius:16,padding:"18px 20px",cursor:"pointer",transition:"transform 0.15s,box-shadow 0.15s"}}
+                  onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-2px)";e.currentTarget.style.boxShadow="0 6px 20px rgba(0,0,0,0.1)";}}
+                  onMouseLeave={e=>{e.currentTarget.style.transform="translateY(0)";e.currentTarget.style.boxShadow="none";}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                    <div>
+                      <div style={{fontWeight:900,fontSize:20,color:CATS[c].color}}>{c}</div>
+                      <div style={{fontSize:11,color:"#64748b",marginTop:1}}>{CATS[c].label}</div>
+                    </div>
+                    <div style={{position:"relative",width:64,height:64}}>
+                      <CircleG pct={sc} size={64} w={6}/>
+                      <div style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",fontSize:11,fontWeight:800,color:"#1e293b"}}>{sc}%</div>
+                    </div>
+                  </div>
+                  <div style={{display:"flex",gap:6,marginTop:10,flexWrap:"wrap"}}>
+                    <span style={{background:"#d1fae5",color:"#065f46",borderRadius:6,padding:"2px 8px",fontSize:10,fontWeight:700}}>✓{done}</span>
+                    {overdue>0&&<span style={{background:"#fee2e2",color:"#991b1b",borderRadius:6,padding:"2px 8px",fontSize:10,fontWeight:700}}>⚠{overdue}</span>}
+                    {pending>0&&<span style={{background:"#fef3c7",color:"#92400e",borderRadius:6,padding:"2px 8px",fontSize:10,fontWeight:700}}>⏳{pending}</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ══ TRACKER ══ */}
+        {tab==="track"&&(
+          <div>
+            {/* Toolbar */}
+            <div style={{...card,padding:"14px 18px",marginBottom:16,display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
+              <input value={tQ} onChange={e=>setTQ(e.target.value)} placeholder="🔍 Search task or regulation..."
+                style={{border:"1px solid #e2e8f0",borderRadius:9,padding:"8px 14px",fontSize:12,flex:1,minWidth:180,outline:"none"}}/>
+              <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                {["ALL","MCA","LODR","PIT","SAST"].map(c=>(
+                  <button key={c} onClick={()=>setTCat(c)}
+                    style={{padding:"6px 13px",borderRadius:7,border:"none",cursor:"pointer",fontSize:11,fontWeight:700,
+                      background:tCat===c?(c==="ALL"?"#1e1b4b":CATS[c]?.color):"#f1f5f9",
+                      color:tCat===c?"#fff":"#64748b",transition:"all 0.15s"}}>{c}</button>
+                ))}
+              </div>
+              <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                {["ALL","overdue","pending","upcoming","done","na"].map(s=>(
+                  <button key={s} onClick={()=>setTSt(s)}
+                    style={{padding:"6px 11px",borderRadius:7,border:"none",cursor:"pointer",fontSize:10,fontWeight:700,textTransform:"capitalize",
+                      background:tSt===s?(s==="ALL"?"#1e1b4b":ST[s]?.color||"#4f46e5"):"#f1f5f9",
+                      color:tSt===s?"#fff":"#64748b",transition:"all 0.15s"}}>{s}</button>
+                ))}
+              </div>
+              <button onClick={openAdd}
+                style={{background:"linear-gradient(135deg,#4f46e5,#7c3aed)",color:"#fff",border:"none",
+                  borderRadius:9,padding:"8px 16px",fontSize:12,fontWeight:700,cursor:"pointer",
+                  whiteSpace:"nowrap",boxShadow:"0 2px 8px rgba(79,70,229,0.3)"}}>
+                ➕ Add New
+              </button>
+            </div>
+
+            {/* Tip bar */}
+            <div style={{background:"#fffbeb",border:"1px solid #fef3c7",borderRadius:10,padding:"8px 16px",marginBottom:12,fontSize:11,color:"#92400e",display:"flex",alignItems:"center",gap:6}}>
+              <span>💡</span>
+              <span><strong>Inline editing:</strong> Click any cell value in the table to edit it directly. Use the ✏️ button for full edit, 🗑️ to delete.</span>
+            </div>
+
+            <div style={{...card,padding:0,overflow:"hidden"}}>
+              <div style={{overflowX:"auto"}}>
+                <table style={{width:"100%",borderCollapse:"collapse",minWidth:1050}}>
+                  <thead>
+                    <tr>
+                      {["#","Reg.","Compliance Task","Provision / Reference","Frequency","Due Date","Days","Status","Remarks","Actions"].map((h,i)=>(
+                        <TH key={i} center={i>=6&&i<=8}>{h}</TH>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtC.map((t,i)=>(
+                      <tr key={t.id} style={{background:i%2===0?"#fff":"#fafbfc"}}
+                        onMouseEnter={e=>e.currentTarget.style.background="#eff6ff"}
+                        onMouseLeave={e=>e.currentTarget.style.background=i%2===0?"#fff":"#fafbfc"}>
+                        <td style={{padding:"10px 12px",borderBottom:"1px solid #f1f5f9",fontSize:11,color:"#94a3b8",fontWeight:600,width:32}}>{i+1}</td>
+                        <td style={{padding:"10px 12px",borderBottom:"1px solid #f1f5f9"}}>
+                          <EditCell value={t.cat} onChange={v=>updateField(t.id,"cat",v)}
+                            options={Object.keys(CATS).map(k=>({v:k,l:k}))}/>
+                        </td>
+                        <td style={{padding:"10px 14px",borderBottom:"1px solid #f1f5f9",maxWidth:220}}>
+                          <EditCell value={t.task} onChange={v=>updateField(t.id,"task",v)}/>
+                        </td>
+                        <td style={{padding:"10px 14px",borderBottom:"1px solid #f1f5f9",maxWidth:180}}>
+                          <EditCell value={t.ref} onChange={v=>updateField(t.id,"ref",v)}/>
+                        </td>
+                        <td style={{padding:"10px 14px",borderBottom:"1px solid #f1f5f9"}}>
+                          <EditCell value={t.freq} onChange={v=>updateField(t.id,"freq",v)}
+                            options={FREQS.map(f=>({v:f,l:f}))}/>
+                        </td>
+                        <td style={{padding:"10px 14px",borderBottom:"1px solid #f1f5f9"}}>
+                          <EditCell value={t.due} type="date" onChange={v=>updateField(t.id,"due",v)}/>
+                        </td>
+                        <td style={{padding:"10px 14px",borderBottom:"1px solid #f1f5f9",textAlign:"center"}}>
+                          <DaysChip due={t.due} status={t.status}/>
+                        </td>
+                        <td style={{padding:"10px 14px",borderBottom:"1px solid #f1f5f9",textAlign:"center"}}>
+                          <select value={t.status} onChange={e=>updateField(t.id,"status",e.target.value)}
+                            style={{border:"1.5px solid #e2e8f0",borderRadius:7,padding:"4px 8px",fontSize:11,cursor:"pointer",
+                              background:ST[t.status]?.bg||"#fff",color:ST[t.status]?.color||"#374151",fontWeight:700,outline:"none"}}>
+                            {Object.entries(ST).map(([k,v])=><option key={k} value={k}>{v.icon} {v.label}</option>)}
+                          </select>
+                        </td>
+                        <td style={{padding:"10px 14px",borderBottom:"1px solid #f1f5f9",maxWidth:160}}>
+                          <EditCell value={t.remarks} onChange={v=>updateField(t.id,"remarks",v)}/>
+                        </td>
+                        <td style={{padding:"10px 12px",borderBottom:"1px solid #f1f5f9",textAlign:"center",whiteSpace:"nowrap"}}>
+                          <button onClick={()=>openEdit(t)}
+                            style={{background:"#eef2ff",color:"#4f46e5",border:"none",borderRadius:6,
+                              padding:"5px 9px",cursor:"pointer",fontSize:13,marginRight:4}} title="Edit">✏️</button>
+                          <button onClick={()=>setDelItem(t)}
+                            style={{background:"#fef2f2",color:"#dc2626",border:"none",borderRadius:6,
+                              padding:"5px 9px",cursor:"pointer",fontSize:13}} title="Delete">🗑️</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {filtC.length===0&&(
+                  <div style={{textAlign:"center",padding:"60px 20px",color:"#94a3b8"}}>
+                    <div style={{fontSize:32,marginBottom:10}}>📋</div>
+                    <div style={{fontSize:14,fontWeight:600,marginBottom:8}}>No compliance items found</div>
+                    <button onClick={openAdd}
+                      style={{background:"#4f46e5",color:"#fff",border:"none",borderRadius:9,padding:"10px 24px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+                      ➕ Add First Compliance
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div style={{padding:"10px 16px",background:"#f8fafc",borderTop:"1px solid #e2e8f0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{fontSize:11,color:"#94a3b8"}}>Showing {filtC.length} of {rows.length} · Click any cell to inline-edit · ✏️ for full edit</span>
+                <button onClick={openAdd}
+                  style={{background:"linear-gradient(135deg,#4f46e5,#7c3aed)",color:"#fff",border:"none",borderRadius:8,
+                    padding:"7px 16px",fontSize:12,fontWeight:700,cursor:"pointer"}}>➕ Add Compliance</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ══ CALENDAR ══ */}
+        {tab==="cal"&&(
+          <div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:18}}>
+              {[{m:3,n:"March 2026"},{m:4,n:"April 2026"},{m:5,n:"May 2026"},{m:6,n:"June 2026"}].map(({m,n})=>{
+                const items=rows.filter(x=>{ const d=new Date(x.due); return d.getMonth()+1===m&&d.getFullYear()===2026; })
+                  .sort((a,b)=>new Date(a.due)-new Date(b.due));
+                return (
+                  <div key={m} style={{...card}}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+                      <h3 style={{margin:0,fontSize:15,fontWeight:800,color:"#1e1b4b"}}>📅 {n}</h3>
+                      <span style={{background:"#eef2ff",color:"#4f46e5",borderRadius:8,padding:"3px 10px",fontSize:11,fontWeight:700}}>{items.length} deadlines</span>
+                    </div>
+                    {items.length===0
+                      ? <div style={{color:"#94a3b8",textAlign:"center",padding:"24px 0",fontSize:13}}>No deadlines this month</div>
+                      : items.map((x,i)=>{
+                          const d=new Date(x.due);
+                          const sc=ST[x.status]||ST.upcoming;
+                          return (
+                            <div key={i} onClick={()=>{openEdit(x);}}
+                              style={{display:"flex",gap:12,padding:"10px 8px",borderBottom:"1px solid #f1f5f9",
+                                alignItems:"flex-start",cursor:"pointer",borderRadius:8,transition:"background 0.12s"}}
+                              onMouseEnter={e=>e.currentTarget.style.background="#f0f4ff"}
+                              onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                              <div style={{flexShrink:0,width:38,textAlign:"center",background:"#f8fafc",borderRadius:8,padding:"4px 0"}}>
+                                <div style={{fontWeight:900,fontSize:18,color:"#1e1b4b",lineHeight:1}}>{d.getDate()}</div>
+                                <div style={{fontSize:8,color:"#94a3b8",letterSpacing:"0.5px",textTransform:"uppercase"}}>{n.split(" ")[0].slice(0,3)}</div>
+                              </div>
+                              <div style={{flex:1}}>
+                                <div style={{fontSize:12,fontWeight:600,color:"#111827"}}>{x.task}</div>
+                                <div style={{display:"flex",gap:5,marginTop:4,flexWrap:"wrap"}}>
+                                  <Badge cat={x.cat}/>
+                                  <span style={{background:sc.bg,color:sc.color,borderRadius:4,padding:"1px 6px",fontSize:9,fontWeight:700}}>{sc.icon} {sc.label}</span>
+                                </div>
+                              </div>
+                              <DaysChip due={x.due} status={x.status}/>
+                            </div>
+                          );
+                      })
+                    }
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ══ COVER REPORT ══ */}
+        {tab==="cover"&&(
+          <div style={{maxWidth:880,margin:"0 auto"}}>
+            <div style={{...card,padding:0,overflow:"hidden",boxShadow:"0 8px 40px rgba(0,0,0,0.13)"}}>
+              <div style={{background:"linear-gradient(135deg,#0f0c29,#302b63,#24243e)",padding:"48px 56px",textAlign:"center"}}>
+                <div style={{fontSize:40}}>⚖️</div>
+                <div style={{color:"#fff",fontSize:26,fontWeight:900,marginTop:14,letterSpacing:"-0.5px"}}>COMPLIANCE STATUS REPORT</div>
+                <div style={{color:"#a5b4fc",fontSize:14,marginTop:6}}>Listed Company · Financial Year {FY}</div>
+                <div style={{color:"#818cf8",fontSize:12,marginTop:3}}>Prepared as on 11 March 2026</div>
+                <div style={{display:"inline-block",marginTop:20,
+                  background:score>=75?"#059669":score>=50?"#d97706":"#dc2626",
+                  color:"#fff",borderRadius:30,padding:"10px 32px",fontWeight:900,fontSize:22}}>
+                  Compliance Score: {score}%
+                </div>
+              </div>
+              <div style={{padding:"40px 56px"}}>
+                {/* Summary table */}
+                <h3 style={{fontSize:13,fontWeight:800,color:"#1e1b4b",borderBottom:"2px solid #e2e8f0",paddingBottom:8,marginBottom:16,letterSpacing:"0.3px"}}>I. REGULATORY COMPLIANCE SUMMARY</h3>
+                <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,marginBottom:32}}>
+                  <thead>
+                    <tr style={{background:"#f8fafc"}}>
+                      {["Regulation","Applicable Law","Total","Completed","Pending","Overdue","Score"].map(h=>(
+                        <th key={h} style={{padding:"9px 13px",textAlign:h==="Regulation"||h==="Applicable Law"?"left":"center",
+                          fontSize:10,fontWeight:700,color:"#64748b",border:"1px solid #e2e8f0"}}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {catStats.map(({c,total,done,pending,overdue,score:sc},i)=>(
+                      <tr key={c} style={{background:i%2===0?"#fff":"#fafbfc"}}>
+                        <td style={{padding:"9px 13px",border:"1px solid #e2e8f0",fontWeight:800,color:CATS[c].color}}>{c}</td>
+                        <td style={{padding:"9px 13px",border:"1px solid #e2e8f0",fontSize:11,color:"#6b7280"}}>{CATS[c].label}</td>
+                        {[total,done,pending,overdue].map((v,j)=>(
+                          <td key={j} style={{padding:"9px 13px",border:"1px solid #e2e8f0",textAlign:"center",fontWeight:600,
+                            color:j===3&&v>0?"#dc2626":"#374151"}}>{v}</td>
+                        ))}
+                        <td style={{padding:"9px 13px",border:"1px solid #e2e8f0",textAlign:"center",fontWeight:800,
+                          color:sc>=75?"#059669":sc>=50?"#d97706":"#dc2626"}}>{sc}%</td>
+                      </tr>
+                    ))}
+                    <tr style={{background:"#eef2ff"}}>
+                      <td colSpan={2} style={{padding:"9px 13px",border:"1px solid #e2e8f0",fontWeight:900,color:"#1e1b4b"}}>TOTAL</td>
+                      {[cs.total,cs.done,cs.pending,cs.overdue].map((v,i)=>(
+                        <td key={i} style={{padding:"9px 13px",border:"1px solid #e2e8f0",textAlign:"center",fontWeight:900,
+                          color:i===3&&v>0?"#dc2626":"#1e1b4b"}}>{v}</td>
+                      ))}
+                      <td style={{padding:"9px 13px",border:"1px solid #e2e8f0",textAlign:"center",fontWeight:900,
+                        color:score>=75?"#059669":score>=50?"#d97706":"#dc2626"}}>{score}%</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                {/* Overdue */}
+                {rows.filter(x=>x.status==="overdue").length>0&&(
+                  <>
+                    <h3 style={{fontSize:13,fontWeight:800,color:"#dc2626",borderBottom:"2px solid #fee2e2",paddingBottom:8,marginBottom:16}}>II. OVERDUE ITEMS — IMMEDIATE ACTION REQUIRED</h3>
+                    {rows.filter(x=>x.status==="overdue").map(t=>(
+                      <div key={t.id} style={{background:"#fef2f2",border:"1px solid #fecaca",borderRadius:10,padding:"12px 16px",marginBottom:10}}>
+                        <div style={{display:"flex",justifyContent:"space-between"}}>
+                          <span style={{fontWeight:700,fontSize:12,color:"#991b1b"}}>{t.task}</span>
+                          <Badge cat={t.cat}/>
+                        </div>
+                        <div style={{fontSize:11,color:"#6b7280",marginTop:3}}>{t.ref} · Due: {fmtDate(t.due)} · {t.remarks}</div>
+                      </div>
+                    ))}
+                    <div style={{marginBottom:24}}/>
+                  </>
+                )}
+
+                {/* Pending */}
+                {rows.filter(x=>x.status==="pending").length>0&&(
+                  <>
+                    <h3 style={{fontSize:13,fontWeight:800,color:"#d97706",borderBottom:"2px solid #fef3c7",paddingBottom:8,marginBottom:16}}>
+                      {rows.filter(x=>x.status==="overdue").length>0?"III":"II"}. PENDING ITEMS — ACTION REQUIRED
+                    </h3>
+                    <table style={{width:"100%",borderCollapse:"collapse",fontSize:11,marginBottom:32}}>
+                      <thead>
+                        <tr style={{background:"#fffbeb"}}>
+                          {["Cat.","Task","Reference","Due Date","Remarks"].map(h=>(
+                            <th key={h} style={{padding:"7px 11px",textAlign:"left",fontWeight:700,color:"#92400e",border:"1px solid #fef3c7",fontSize:10}}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.filter(x=>x.status==="pending").map((t,i)=>(
+                          <tr key={t.id} style={{background:i%2===0?"#fff":"#fffbeb"}}>
+                            <td style={{padding:"7px 11px",border:"1px solid #fef3c7"}}><Badge cat={t.cat}/></td>
+                            <td style={{padding:"7px 11px",border:"1px solid #fef3c7",fontWeight:600}}>{t.task}</td>
+                            <td style={{padding:"7px 11px",border:"1px solid #fef3c7",color:"#6b7280"}}>{t.ref}</td>
+                            <td style={{padding:"7px 11px",border:"1px solid #fef3c7",whiteSpace:"nowrap"}}>{fmtDate(t.due)}</td>
+                            <td style={{padding:"7px 11px",border:"1px solid #fef3c7",color:"#6b7280"}}>{t.remarks}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </>
+                )}
+
+                {/* Certification */}
+                <div style={{marginTop:32,borderTop:"2px solid #e2e8f0",paddingTop:28}}>
+                  <h3 style={{fontSize:12,fontWeight:800,color:"#1e293b",marginBottom:12}}>CERTIFICATION</h3>
+                  <p style={{fontSize:11,color:"#475569",lineHeight:1.9,fontStyle:"italic",background:"#f8fafc",padding:"16px 20px",borderRadius:10,border:"1px solid #e2e8f0"}}>
+                    This Compliance Status Report has been prepared based on records maintained by the Company and information provided by respective departments. The status indicated represents the position as on <strong>11 March 2026</strong> and is prepared for internal governance and compliance monitoring purposes under the Companies Act, 2013 and applicable SEBI Regulations. This is neither an assurance as to future viability nor of the efficacy with which management has conducted the affairs of the Company.
+                  </p>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:48,marginTop:40}}>
+                    {["Company Secretary","Compliance Officer","MD / CEO"].map(r=>(
+                      <div key={r} style={{borderTop:"1.5px solid #1e293b",paddingTop:8,textAlign:"center"}}>
+                        <div style={{fontSize:12,fontWeight:700,color:"#1e293b"}}>{r}</div>
+                        <div style={{fontSize:10,color:"#94a3b8",marginTop:2}}>Signature & Date</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div style={{textAlign:"center",marginTop:18}}>
+              <button onClick={()=>window.print()} style={{background:"#1e1b4b",color:"#fff",border:"none",borderRadius:10,
+                padding:"12px 32px",fontSize:13,fontWeight:700,cursor:"pointer"}}>🖨️ Print / Export Cover</button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&display=swap');
+        *{box-sizing:border-box;} body{margin:0;}
+        @keyframes blink{0%,100%{opacity:1}50%{opacity:0.6}}
+        @keyframes slideUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+        @keyframes slideIn{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}
+        select{outline:none;} input:focus{outline:2px solid #4f46e5;outline-offset:1px;}
+        ::-webkit-scrollbar{width:5px;height:5px} ::-webkit-scrollbar-track{background:#f1f5f9}
+        ::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:99px}
+        @media print{button{display:none!important}}
+      `}</style>
+    </div>
+  );
+}
