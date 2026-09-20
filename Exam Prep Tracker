@@ -1,0 +1,870 @@
+import { useState, useMemo, useRef, useEffect } from "react";
+
+// ── CONFIG / CONSTANTS ────────────────────────────────────────────────────────
+const LS_KEY = "examPrepTracker.v1";
+
+const PALETTE = [
+  { color:"#4f46e5", light:"#eef2ff" },
+  { color:"#0284c7", light:"#e0f2fe" },
+  { color:"#7c3aed", light:"#f5f3ff" },
+  { color:"#be185d", light:"#fdf2f8" },
+  { color:"#0d9488", light:"#f0fdfa" },
+  { color:"#ca8a04", light:"#fefce8" },
+  { color:"#dc2626", light:"#fef2f2" },
+  { color:"#059669", light:"#ecfdf5" },
+];
+const colorFor = (name) => {
+  let h = 0;
+  for (let i = 0; i < (name || "").length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return PALETTE[h % PALETTE.length];
+};
+
+const PRI = {
+  High:   { color:"#dc2626", bg:"#fee2e2" },
+  Medium: { color:"#d97706", bg:"#fef3c7" },
+  Low:    { color:"#64748b", bg:"#f1f5f9" },
+};
+
+const ST = {
+  notstarted: { label:"Not Started", icon:"○", color:"#64748b", bg:"#f1f5f9" },
+  inprogress: { label:"In Progress", icon:"◐", color:"#d97706", bg:"#fef3c7" },
+  revision:   { label:"Revision",    icon:"↻", color:"#0284c7", bg:"#e0f2fe" },
+  mastered:   { label:"Mastered",    icon:"✓", color:"#059669", bg:"#d1fae5" },
+};
+
+const defaultSubjects = ["Company Law & Practice", "Securities Laws & Capital Markets", "Tax Laws & Practice", "Economic & Commercial Laws"];
+
+const todayISO = () => new Date().toISOString().slice(0, 10);
+const addDays = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+
+const seedTopics = [
+  { id:1, subject:defaultSubjects[0], topic:"Constitution of Companies & Types", priority:"High",   status:"mastered",   target:addDays(-10), hoursPlanned:8,  hoursDone:8,  notes:"Covered incl. case law" },
+  { id:2, subject:defaultSubjects[0], topic:"Board Composition & Meetings",       priority:"High",   status:"revision",   target:addDays(3),   hoursPlanned:6,  hoursDone:4,  notes:"Revise Sec.173-179" },
+  { id:3, subject:defaultSubjects[0], topic:"Compromises, Arrangements & Amalgamations", priority:"Medium", status:"inprogress", target:addDays(12),  hoursPlanned:10, hoursDone:3,  notes:"" },
+  { id:4, subject:defaultSubjects[1], topic:"SEBI LODR Disclosure Norms",         priority:"High",   status:"inprogress", target:addDays(5),   hoursPlanned:8,  hoursDone:5,  notes:"Reg.30 & 34 focus" },
+  { id:5, subject:defaultSubjects[1], topic:"Takeover Code (SAST)",               priority:"Medium", status:"notstarted", target:addDays(20),  hoursPlanned:7,  hoursDone:0,  notes:"" },
+  { id:6, subject:defaultSubjects[1], topic:"Insider Trading Regulations (PIT)",  priority:"High",   status:"revision",   target:addDays(-2),  hoursPlanned:6,  hoursDone:5,  notes:"Behind schedule, prioritize" },
+  { id:7, subject:defaultSubjects[2], topic:"Income Tax – Heads of Income",       priority:"Medium", status:"inprogress", target:addDays(15),  hoursPlanned:12, hoursDone:6,  notes:"" },
+  { id:8, subject:defaultSubjects[2], topic:"GST – Input Tax Credit",             priority:"Low",    status:"notstarted", target:addDays(30),  hoursPlanned:6,  hoursDone:0,  notes:"" },
+  { id:9, subject:defaultSubjects[3], topic:"Competition Act – Combinations",     priority:"Medium", status:"mastered",   target:addDays(-15), hoursPlanned:5,  hoursDone:5,  notes:"" },
+  { id:10,subject:defaultSubjects[3], topic:"FEMA – Overseas Investment",         priority:"Low",    status:"notstarted", target:addDays(35),  hoursPlanned:6,  hoursDone:0,  notes:"" },
+];
+
+const seedMocks = [
+  { id:1, name:"Mock Test 1 – Full Syllabus", date:addDays(-20), score:58, max:100 },
+  { id:2, name:"Mock Test 2 – Company Law",   date:addDays(-9),  score:71, max:100 },
+  { id:3, name:"Mock Test 3 – Full Syllabus", date:addDays(-1),  score:66, max:100 },
+];
+
+const blankTopic = () => ({ subject:defaultSubjects[0], topic:"", priority:"Medium", status:"notstarted", target:addDays(14), hoursPlanned:0, hoursDone:0, notes:"" });
+const blankMock  = () => ({ name:"", date:todayISO(), score:0, max:100 });
+
+const daysFrom = (d) => Math.ceil((new Date(d) - new Date(new Date().toDateString())) / 86400000);
+const fmtDate  = (d) => { try { return new Date(d).toLocaleDateString("en-IN", { day:"2-digit", month:"short", year:"numeric" }); } catch { return d || "—"; } };
+const uid      = () => Date.now() + Math.random();
+
+const loadState = () => {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return null;
+};
+const saveState = (state) => { try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch {} };
+
+// ── MINI UI ──────────────────────────────────────────────────────────────────
+const SubjectBadge = ({ subject }) => {
+  const c = colorFor(subject);
+  return <span style={{ background:c.light, color:c.color, borderRadius:5, padding:"2px 9px", fontSize:10, fontWeight:700, whiteSpace:"nowrap", display:"inline-block", maxWidth:150, overflow:"hidden", textOverflow:"ellipsis" }}>{subject}</span>;
+};
+const PriorityPill = ({ p }) => {
+  const c = PRI[p] || PRI.Medium;
+  return <span style={{ background:c.bg, color:c.color, borderRadius:6, padding:"2px 9px", fontSize:10, fontWeight:700 }}>{p}</span>;
+};
+const StatusPill = ({ s }) => {
+  const c = ST[s] || ST.notstarted;
+  return <span style={{ background:c.bg, color:c.color, borderRadius:6, padding:"3px 10px", fontSize:11, fontWeight:700, whiteSpace:"nowrap" }}>{c.icon} {c.label}</span>;
+};
+const DaysChip = ({ due, status }) => {
+  if (status === "mastered") return <span style={{ color:"#94a3b8", fontSize:12 }}>—</span>;
+  const d = daysFrom(due);
+  const col = d < 0 ? "#dc2626" : d <= 3 ? "#d97706" : d <= 14 ? "#4f46e5" : "#059669";
+  return <span style={{ fontWeight:700, fontSize:12, color:col }}>{d < 0 ? `${Math.abs(d)}d behind` : d === 0 ? "today" : `${d}d`}</span>;
+};
+const CircleG = ({ pct, size = 64, w = 6 }) => {
+  const r = (size - w) / 2, ci = 2 * Math.PI * r, off = ci - (pct / 100) * ci;
+  const col = pct >= 75 ? "#059669" : pct >= 45 ? "#d97706" : "#dc2626";
+  return (
+    <svg width={size} height={size} style={{ transform:"rotate(-90deg)" }}>
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#e2e8f0" strokeWidth={w} />
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={col} strokeWidth={w}
+        strokeDasharray={ci} strokeDashoffset={off} strokeLinecap="round" style={{ transition:"stroke-dashoffset 0.9s" }} />
+    </svg>
+  );
+};
+
+const inputStyle = { border:"1.5px solid #e2e8f0", borderRadius:8, padding:"8px 11px", fontSize:12, width:"100%", background:"#fff", color:"#1e293b", outline:"none", fontFamily:"'Outfit',sans-serif", transition:"border-color 0.15s" };
+const labelStyle = { fontSize:10, fontWeight:700, color:"#64748b", letterSpacing:"0.5px", textTransform:"uppercase", display:"block", marginBottom:4 };
+
+// ── TOPIC MODAL ────────────────────────────────────────────────────────────────
+function TopicModal({ form, setForm, subjects, onSave, onClose, isEdit }) {
+  const f = (field, val) => setForm(p => ({ ...p, [field]: val }));
+  const ok = form.subject.trim() && form.topic.trim() && form.target;
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(10,10,30,0.55)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", backdropFilter:"blur(3px)" }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background:"#fff", borderRadius:20, width:"min(620px,95vw)", maxHeight:"90vh", overflowY:"auto", boxShadow:"0 24px 64px rgba(0,0,0,0.22)", animation:"slideUp 0.2s ease" }}>
+        <div style={{ background:"linear-gradient(135deg,#0f172a,#164e63)", padding:"22px 28px", borderRadius:"20px 20px 0 0", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+          <div>
+            <div style={{ color:"#fff", fontWeight:800, fontSize:17 }}>{isEdit ? "✏️ Edit Topic" : "➕ Add New Topic"}</div>
+            <div style={{ color:"#7dd3fc", fontSize:11, marginTop:2 }}>{isEdit ? "Update this study item" : "Add a chapter / topic to your plan"}</div>
+          </div>
+          <button onClick={onClose} style={{ background:"rgba(255,255,255,0.15)", border:"none", color:"#fff", width:32, height:32, borderRadius:8, cursor:"pointer", fontSize:16 }}>✕</button>
+        </div>
+        <div style={{ padding:"26px 28px", display:"grid", gridTemplateColumns:"1fr 1fr", gap:16 }}>
+          <div>
+            <label style={labelStyle}>Subject *</label>
+            <input value={form.subject} onChange={e => f("subject", e.target.value)} list="subject-list" placeholder="e.g. Company Law" style={inputStyle} />
+            <datalist id="subject-list">{subjects.map(s => <option key={s} value={s} />)}</datalist>
+          </div>
+          <div>
+            <label style={labelStyle}>Priority *</label>
+            <select value={form.priority} onChange={e => f("priority", e.target.value)} style={inputStyle}>
+              {Object.keys(PRI).map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </div>
+          <div style={{ gridColumn:"1/-1" }}>
+            <label style={labelStyle}>Topic / Chapter *</label>
+            <input value={form.topic} onChange={e => f("topic", e.target.value)} placeholder="e.g. Board Composition & Meetings" style={inputStyle} />
+          </div>
+          <div>
+            <label style={labelStyle}>Target Date *</label>
+            <input type="date" value={form.target} onChange={e => f("target", e.target.value)} style={inputStyle} />
+          </div>
+          <div>
+            <label style={labelStyle}>Status *</label>
+            <select value={form.status} onChange={e => f("status", e.target.value)} style={inputStyle}>
+              {Object.entries(ST).map(([k, v]) => <option key={k} value={k}>{v.icon} {v.label}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={labelStyle}>Hours Planned</label>
+            <input type="number" min="0" value={form.hoursPlanned} onChange={e => f("hoursPlanned", Number(e.target.value))} style={inputStyle} />
+          </div>
+          <div>
+            <label style={labelStyle}>Hours Done</label>
+            <input type="number" min="0" value={form.hoursDone} onChange={e => f("hoursDone", Number(e.target.value))} style={inputStyle} />
+          </div>
+          <div style={{ gridColumn:"1/-1" }}>
+            <label style={labelStyle}>Notes</label>
+            <textarea value={form.notes} onChange={e => f("notes", e.target.value)} rows={2} placeholder="Optional notes, weak areas, references..." style={{ ...inputStyle, resize:"vertical", lineHeight:1.5 }} />
+          </div>
+        </div>
+        {form.subject && form.status && (
+          <div style={{ padding:"0 28px 8px", display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+            <span style={{ fontSize:11, color:"#94a3b8" }}>Preview:</span>
+            <SubjectBadge subject={form.subject} />
+            <PriorityPill p={form.priority} />
+            <StatusPill s={form.status} />
+            {form.target && <DaysChip due={form.target} status={form.status} />}
+          </div>
+        )}
+        <div style={{ padding:"16px 28px 24px", display:"flex", justifyContent:"flex-end", gap:10, borderTop:"1px solid #f1f5f9" }}>
+          <button onClick={onClose} style={{ padding:"9px 22px", borderRadius:9, border:"1.5px solid #e2e8f0", background:"#fff", color:"#64748b", fontWeight:600, cursor:"pointer", fontSize:13 }}>Cancel</button>
+          <button onClick={onSave} disabled={!ok}
+            style={{ padding:"9px 22px", borderRadius:9, border:"none", fontWeight:700, cursor:ok ? "pointer" : "not-allowed", fontSize:13,
+              background:ok ? "linear-gradient(135deg,#0f172a,#0284c7)" : "#e2e8f0", color:ok ? "#fff" : "#94a3b8" }}>
+            {isEdit ? "💾 Save Changes" : "➕ Add Topic"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── MOCK TEST MODAL ─────────────────────────────────────────────────────────────
+function MockModal({ form, setForm, onSave, onClose, isEdit }) {
+  const f = (field, val) => setForm(p => ({ ...p, [field]: val }));
+  const ok = form.name.trim() && form.date && form.max > 0;
+  const pct = form.max > 0 ? Math.round((form.score / form.max) * 100) : 0;
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(10,10,30,0.55)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", backdropFilter:"blur(3px)" }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background:"#fff", borderRadius:18, width:"min(440px,92vw)", boxShadow:"0 24px 64px rgba(0,0,0,0.22)", animation:"slideUp 0.2s ease" }}>
+        <div style={{ background:"linear-gradient(135deg,#0f172a,#164e63)", padding:"20px 24px", borderRadius:"18px 18px 0 0" }}>
+          <div style={{ color:"#fff", fontWeight:800, fontSize:16 }}>{isEdit ? "✏️ Edit Mock Test" : "📝 Add Mock Test"}</div>
+        </div>
+        <div style={{ padding:22, display:"flex", flexDirection:"column", gap:14 }}>
+          <div>
+            <label style={labelStyle}>Test Name *</label>
+            <input value={form.name} onChange={e => f("name", e.target.value)} placeholder="e.g. Mock Test 4 – Full Syllabus" style={inputStyle} />
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
+            <div>
+              <label style={labelStyle}>Date *</label>
+              <input type="date" value={form.date} onChange={e => f("date", e.target.value)} style={inputStyle} />
+            </div>
+            <div />
+            <div>
+              <label style={labelStyle}>Score *</label>
+              <input type="number" min="0" value={form.score} onChange={e => f("score", Number(e.target.value))} style={inputStyle} />
+            </div>
+            <div>
+              <label style={labelStyle}>Out of *</label>
+              <input type="number" min="1" value={form.max} onChange={e => f("max", Number(e.target.value))} style={inputStyle} />
+            </div>
+          </div>
+          <div style={{ background:"#f8fafc", borderRadius:10, padding:"10px 14px", textAlign:"center" }}>
+            <span style={{ fontSize:11, color:"#94a3b8" }}>Score: </span>
+            <span style={{ fontWeight:800, fontSize:16, color:pct >= 60 ? "#059669" : pct >= 40 ? "#d97706" : "#dc2626" }}>{pct}%</span>
+          </div>
+        </div>
+        <div style={{ padding:"0 22px 20px", display:"flex", justifyContent:"flex-end", gap:10 }}>
+          <button onClick={onClose} style={{ padding:"9px 20px", borderRadius:9, border:"1.5px solid #e2e8f0", background:"#fff", color:"#64748b", fontWeight:600, cursor:"pointer", fontSize:13 }}>Cancel</button>
+          <button onClick={onSave} disabled={!ok}
+            style={{ padding:"9px 20px", borderRadius:9, border:"none", fontWeight:700, cursor:ok ? "pointer" : "not-allowed", fontSize:13,
+              background:ok ? "linear-gradient(135deg,#0f172a,#0284c7)" : "#e2e8f0", color:ok ? "#fff" : "#94a3b8" }}>
+            {isEdit ? "💾 Save" : "➕ Add"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── EXAM SETTINGS MODAL ──────────────────────────────────────────────────────────
+function ExamSettingsModal({ name, date, onSave, onClose }) {
+  const [n, setN] = useState(name);
+  const [d, setD] = useState(date);
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(10,10,30,0.55)", zIndex:1001, display:"flex", alignItems:"center", justifyContent:"center", backdropFilter:"blur(3px)" }}>
+      <div style={{ background:"#fff", borderRadius:16, width:"min(380px,90vw)", padding:26, boxShadow:"0 16px 48px rgba(0,0,0,0.2)" }}>
+        <div style={{ fontWeight:800, fontSize:15, color:"#1e293b", marginBottom:16 }}>🎯 Exam Details</div>
+        <label style={labelStyle}>Exam Name</label>
+        <input value={n} onChange={e => setN(e.target.value)} style={{ ...inputStyle, marginBottom:14 }} />
+        <label style={labelStyle}>Exam Date</label>
+        <input type="date" value={d} onChange={e => setD(e.target.value)} style={{ ...inputStyle, marginBottom:20 }} />
+        <div style={{ display:"flex", gap:10 }}>
+          <button onClick={onClose} style={{ flex:1, padding:"10px", borderRadius:9, border:"1.5px solid #e2e8f0", background:"#fff", color:"#64748b", fontWeight:600, cursor:"pointer", fontSize:13 }}>Cancel</button>
+          <button onClick={() => onSave(n, d)} style={{ flex:1, padding:"10px", borderRadius:9, border:"none", background:"linear-gradient(135deg,#0f172a,#0284c7)", color:"#fff", fontWeight:700, cursor:"pointer", fontSize:13 }}>Save</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── DELETE CONFIRM ────────────────────────────────────────────────────────────
+function DeleteConfirm({ label, onConfirm, onClose }) {
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(10,10,30,0.55)", zIndex:1001, display:"flex", alignItems:"center", justifyContent:"center", backdropFilter:"blur(3px)" }}>
+      <div style={{ background:"#fff", borderRadius:16, width:"min(400px,90vw)", padding:28, boxShadow:"0 16px 48px rgba(0,0,0,0.2)" }}>
+        <div style={{ fontSize:36, textAlign:"center", marginBottom:12 }}>🗑️</div>
+        <div style={{ fontWeight:800, fontSize:16, color:"#1e293b", textAlign:"center", marginBottom:8 }}>Delete this item?</div>
+        <div style={{ fontSize:12, color:"#64748b", textAlign:"center", marginBottom:6 }}>This action cannot be undone.</div>
+        <div style={{ background:"#fef2f2", border:"1px solid #fecaca", borderRadius:10, padding:"10px 14px", marginBottom:20, textAlign:"center" }}>
+          <div style={{ fontWeight:700, fontSize:13, color:"#991b1b" }}>{label}</div>
+        </div>
+        <div style={{ display:"flex", gap:10 }}>
+          <button onClick={onClose} style={{ flex:1, padding:"10px", borderRadius:9, border:"1.5px solid #e2e8f0", background:"#fff", color:"#64748b", fontWeight:600, cursor:"pointer", fontSize:13 }}>Cancel</button>
+          <button onClick={onConfirm} style={{ flex:1, padding:"10px", borderRadius:9, border:"none", background:"#dc2626", color:"#fff", fontWeight:700, cursor:"pointer", fontSize:13 }}>Delete</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── INLINE EDIT CELL ──────────────────────────────────────────────────────────
+function EditCell({ value, onChange, type = "text", options }) {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(value);
+  const commit = () => { onChange(type === "number" ? Number(val) : val); setEditing(false); };
+  if (!editing) return (
+    <span onClick={() => setEditing(true)}
+      style={{ cursor:"text", borderRadius:5, padding:"2px 5px", display:"inline-block", border:"1px dashed transparent", minWidth:40, fontSize:12, color:"#374151" }}
+      onMouseEnter={e => e.target.style.borderColor = "#cbd5e1"} onMouseLeave={e => e.target.style.borderColor = "transparent"}>
+      {value === "" || value === undefined ? <span style={{ color:"#94a3b8", fontStyle:"italic" }}>click to edit</span> : String(value)}
+    </span>
+  );
+  if (options) return (
+    <select autoFocus value={val} onChange={e => setVal(e.target.value)} onBlur={commit}
+      style={{ border:"1.5px solid #0284c7", borderRadius:6, padding:"3px 6px", fontSize:11, background:"#fff", outline:"none" }}>
+      {options.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
+    </select>
+  );
+  if (type === "date" || type === "number") return (
+    <input autoFocus type={type} value={val} onChange={e => setVal(e.target.value)} onBlur={commit} onKeyDown={e => e.key === "Enter" && commit()}
+      style={{ border:"1.5px solid #0284c7", borderRadius:6, padding:"3px 7px", fontSize:11, outline:"none", width:type === "number" ? 70 : "auto" }} />
+  );
+  return (
+    <input autoFocus value={val} onChange={e => setVal(e.target.value)} onBlur={commit} onKeyDown={e => e.key === "Enter" && commit()}
+      style={{ border:"1.5px solid #0284c7", borderRadius:6, padding:"3px 7px", fontSize:11, outline:"none", width:"100%", minWidth:120 }} />
+  );
+}
+
+// ── MAIN ──────────────────────────────────────────────────────────────────────
+export default function App() {
+  const persisted = useMemo(loadState, []);
+  const [tab, setTab]       = useState("dash");
+  const [examName, setExamName] = useState(persisted?.examName ?? "CS Professional Programme");
+  const [examDate, setExamDate] = useState(persisted?.examDate ?? addDays(60));
+  const [topics, setTopics] = useState(persisted?.topics ?? seedTopics);
+  const [mocks, setMocks]   = useState(persisted?.mocks ?? seedMocks);
+  const [modal, setModal]   = useState(null); // null | "add" | {id}
+  const [mockModal, setMockModal] = useState(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [delItem, setDelItem]     = useState(null); // {kind:"topic"|"mock", item}
+  const [form, setForm]     = useState(blankTopic());
+  const [mockForm, setMockForm] = useState(blankMock());
+  const [tSubj, setTSubj]   = useState("ALL");
+  const [tSt, setTSt]       = useState("ALL");
+  const [tPri, setTPri]     = useState("ALL");
+  const [tQ, setTQ]         = useState("");
+  const [toast, setToast]   = useState(null);
+
+  useEffect(() => { saveState({ examName, examDate, topics, mocks }); }, [examName, examDate, topics, mocks]);
+
+  const showToast = (msg, type = "success") => { setToast({ msg, type }); setTimeout(() => setToast(null), 2800); };
+
+  const subjects = useMemo(() => Array.from(new Set([...defaultSubjects, ...topics.map(t => t.subject)])), [topics]);
+
+  const openAdd = () => { setForm(blankTopic()); setModal("add"); };
+  const openEdit = row => { setForm({ ...row }); setModal(row.id); };
+  const closeModal = () => setModal(null);
+
+  const saveTopic = () => {
+    if (modal === "add") {
+      setTopics(p => [...p, { ...form, id: uid() }]);
+      showToast(`✅ "${form.topic}" added`);
+    } else {
+      setTopics(p => p.map(r => r.id === modal ? { ...form, id: modal } : r));
+      showToast(`💾 "${form.topic}" updated`);
+    }
+    closeModal();
+  };
+  const deleteTopic = (item) => { setTopics(p => p.filter(r => r.id !== item.id)); setDelItem(null); showToast(`🗑️ "${item.topic}" deleted`, "error"); };
+  const updateField = (id, field, val) => setTopics(p => p.map(r => r.id === id ? { ...r, [field]: val } : r));
+
+  const openMockAdd = () => { setMockForm(blankMock()); setMockModal("add"); };
+  const openMockEdit = row => { setMockForm({ ...row }); setMockModal(row.id); };
+  const saveMock = () => {
+    if (mockModal === "add") { setMocks(p => [...p, { ...mockForm, id: uid() }]); showToast(`✅ "${mockForm.name}" added`); }
+    else { setMocks(p => p.map(r => r.id === mockModal ? { ...mockForm, id: mockModal } : r)); showToast(`💾 "${mockForm.name}" updated`); }
+    setMockModal(null);
+  };
+  const deleteMock = (item) => { setMocks(p => p.filter(r => r.id !== item.id)); setDelItem(null); showToast(`🗑️ "${item.name}" deleted`, "error"); };
+
+  const daysLeft = daysFrom(examDate);
+
+  const cs = useMemo(() => ({
+    total: topics.length,
+    mastered: topics.filter(x => x.status === "mastered").length,
+    inprogress: topics.filter(x => x.status === "inprogress").length,
+    revision: topics.filter(x => x.status === "revision").length,
+    notstarted: topics.filter(x => x.status === "notstarted").length,
+  }), [topics]);
+  const readiness = topics.length ? Math.round((cs.mastered / topics.length) * 100) : 0;
+  const hoursLogged = topics.reduce((s, t) => s + (Number(t.hoursDone) || 0), 0);
+  const avgMock = mocks.length ? Math.round(mocks.reduce((s, m) => s + (m.score / m.max) * 100, 0) / mocks.length) : 0;
+
+  const subjectStats = useMemo(() => subjects.map(s => {
+    const r = topics.filter(x => x.subject === s);
+    const mastered = r.filter(x => x.status === "mastered").length;
+    return { s, total: r.length, mastered, behind: r.filter(x => x.status !== "mastered" && daysFrom(x.target) < 0).length, score: r.length ? Math.round((mastered / r.length) * 100) : 0 };
+  }).filter(x => x.total > 0), [subjects, topics]);
+
+  const focusNow = useMemo(() => topics
+    .filter(x => x.status !== "mastered" && (x.priority === "High" || daysFrom(x.target) <= 7))
+    .sort((a, b) => daysFrom(a.target) - daysFrom(b.target)).slice(0, 8), [topics]);
+
+  const filtT = useMemo(() => topics.filter(x =>
+    (tSubj === "ALL" || x.subject === tSubj) &&
+    (tSt === "ALL" || x.status === tSt) &&
+    (tPri === "ALL" || x.priority === tPri) &&
+    (!tQ || x.topic.toLowerCase().includes(tQ.toLowerCase()) || x.subject.toLowerCase().includes(tQ.toLowerCase()))
+  ), [topics, tSubj, tSt, tPri, tQ]);
+
+  const sortedMocks = useMemo(() => [...mocks].sort((a, b) => new Date(a.date) - new Date(b.date)), [mocks]);
+
+  const card = { background:"#fff", borderRadius:16, boxShadow:"0 1px 10px rgba(0,0,0,0.07)", padding:"22px 24px" };
+  const tabBtn = (id) => ({
+    padding:"11px 20px", border:"none", cursor:"pointer", fontSize:12.5, fontWeight:600,
+    background: tab === id ? "#fff" : "transparent",
+    color: tab === id ? "#0f172a" : "#94c4dd",
+    borderRadius:"8px 8px 0 0", transition:"all 0.18s",
+    borderBottom: tab === id ? "3px solid #0284c7" : "3px solid transparent", whiteSpace:"nowrap",
+  });
+  const TH = ({ children, center }) => (
+    <th style={{ padding:"10px 14px", textAlign: center ? "center" : "left", fontSize:10, fontWeight:700, color:"#94a3b8", letterSpacing:"0.6px", textTransform:"uppercase", background:"#f8fafc", borderBottom:"2px solid #e2e8f0", whiteSpace:"nowrap" }}>{children}</th>
+  );
+
+  return (
+    <div style={{ fontFamily:"'Outfit','DM Sans',sans-serif", background:"#f0f4f8", minHeight:"100vh", color:"#1e293b" }}>
+      {toast && (
+        <div style={{ position:"fixed", top:20, right:24, zIndex:2000,
+          background: toast.type === "error" ? "#fef2f2" : "#f0fdf4",
+          border:`1.5px solid ${toast.type === "error" ? "#fecaca" : "#bbf7d0"}`,
+          borderRadius:12, padding:"12px 20px", boxShadow:"0 8px 24px rgba(0,0,0,0.12)",
+          fontSize:13, fontWeight:600, color: toast.type === "error" ? "#991b1b" : "#166534", maxWidth:360 }}>
+          {toast.msg}
+        </div>
+      )}
+
+      {(modal === "add" || typeof modal === "number") && (
+        <TopicModal form={form} setForm={setForm} subjects={subjects} onSave={saveTopic} onClose={closeModal} isEdit={modal !== "add"} />
+      )}
+      {(mockModal === "add" || typeof mockModal === "number") && (
+        <MockModal form={mockForm} setForm={setMockForm} onSave={saveMock} onClose={() => setMockModal(null)} isEdit={mockModal !== "add"} />
+      )}
+      {settingsOpen && (
+        <ExamSettingsModal name={examName} date={examDate}
+          onSave={(n, d) => { setExamName(n); setExamDate(d); setSettingsOpen(false); showToast("🎯 Exam details updated"); }}
+          onClose={() => setSettingsOpen(false)} />
+      )}
+      {delItem && (
+        <DeleteConfirm label={delItem.kind === "topic" ? delItem.item.topic : delItem.item.name}
+          onConfirm={() => delItem.kind === "topic" ? deleteTopic(delItem.item) : deleteMock(delItem.item)}
+          onClose={() => setDelItem(null)} />
+      )}
+
+      {/* TOPBAR */}
+      <div style={{ background:"linear-gradient(135deg,#0f172a,#1e3a5f,#164e63)", boxShadow:"0 4px 24px rgba(0,0,0,0.35)" }}>
+        <div style={{ maxWidth:1320, margin:"0 auto", padding:"0 28px" }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"18px 0 0", flexWrap:"wrap", gap:10 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:14 }}>
+              <div style={{ width:44, height:44, background:"linear-gradient(135deg,#0284c7,#0d9488)", borderRadius:12, display:"flex", alignItems:"center", justifyContent:"center", fontSize:22 }}>📚</div>
+              <div>
+                <div style={{ color:"#fff", fontWeight:800, fontSize:20, letterSpacing:"-0.5px" }}>Exam Prep Tracker</div>
+                <div onClick={() => setSettingsOpen(true)} style={{ color:"#7dd3fc", fontSize:11, letterSpacing:"0.5px", fontWeight:500, cursor:"pointer" }}>
+                  🎯 {examName} · {fmtDate(examDate)} ✏️
+                </div>
+              </div>
+            </div>
+            <div style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
+              <div style={{ background:"rgba(255,255,255,0.08)", borderRadius:10, padding:"8px 16px", textAlign:"center" }}>
+                <div style={{ color:"#7dd3fc", fontSize:10, letterSpacing:"0.5px" }}>DAYS TO GO</div>
+                <div style={{ color: daysLeft <= 7 ? "#f87171" : "#fff", fontSize:18, fontWeight:800 }}>{daysLeft < 0 ? "Exam over" : daysLeft}</div>
+              </div>
+              <div style={{ background:"rgba(255,255,255,0.08)", borderRadius:10, padding:"8px 16px", textAlign:"center" }}>
+                <div style={{ color:"#7dd3fc", fontSize:10 }}>READINESS</div>
+                <div style={{ color: readiness >= 75 ? "#4ade80" : readiness >= 50 ? "#fbbf24" : "#f87171", fontSize:18, fontWeight:800 }}>{readiness}%</div>
+              </div>
+              <button onClick={openAdd}
+                style={{ background:"linear-gradient(135deg,#0284c7,#0d9488)", color:"#fff", border:"none", borderRadius:10, padding:"10px 18px", fontSize:13, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", gap:6, whiteSpace:"nowrap", boxShadow:"0 4px 12px rgba(2,132,199,0.4)" }}>
+                ➕ Add Topic
+              </button>
+            </div>
+          </div>
+          <div style={{ display:"flex", gap:2, marginTop:12, overflowX:"auto" }}>
+            {[{ id:"dash", label:"📊 Dashboard" }, { id:"topics", label:"📋 Topics" }, { id:"mocks", label:"📝 Mock Tests" }, { id:"cal", label:"📅 Calendar" }, { id:"report", label:"📄 Report" }].map(t => (
+              <button key={t.id} onClick={() => setTab(t.id)} style={tabBtn(t.id)}>{t.label}</button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ maxWidth:1320, margin:"0 auto", padding:"26px 28px" }}>
+
+        {/* ══ DASHBOARD ══ */}
+        {tab === "dash" && (
+          <div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:14, marginBottom:22 }}>
+              {[
+                { label:"Readiness Score", val:`${readiness}%`, sub:`${cs.mastered}/${cs.total} mastered`, color:"#0284c7", bg:"#e0f2fe" },
+                { label:"Mastered", val:cs.mastered, sub:"Fully prepared", color:"#059669", bg:"#f0fdf4" },
+                { label:"In Progress", val:cs.inprogress + cs.revision, sub:"Studying / revising", color:"#d97706", bg:"#fffbeb" },
+                { label:"Not Started", val:cs.notstarted, sub:"Yet to begin", color:"#64748b", bg:"#f8fafc" },
+                { label:"Avg Mock Score", val:`${avgMock}%`, sub:`${mocks.length} tests taken`, color:"#7c3aed", bg:"#f5f3ff" },
+              ].map((k, i) => (
+                <div key={i} style={{ ...card, border:`1.5px solid ${k.bg}`, padding:"18px 20px" }}>
+                  <div style={{ fontSize:10, color:"#94a3b8", fontWeight:700, letterSpacing:"0.6px", textTransform:"uppercase" }}>{k.label}</div>
+                  <div style={{ fontSize:34, fontWeight:900, color:k.color, lineHeight:1.1, marginTop:4 }}>{k.val}</div>
+                  <div style={{ fontSize:11, color:"#64748b", marginTop:3 }}>{k.sub}</div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display:"grid", gridTemplateColumns:"1.2fr 1fr", gap:18, marginBottom:18 }}>
+              <div style={card}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
+                  <h3 style={{ margin:0, fontSize:14, fontWeight:700 }}>Progress by Subject</h3>
+                  <span style={{ fontSize:11, color:"#94a3b8" }}>{hoursLogged}h studied</span>
+                </div>
+                {subjectStats.map(({ s, total, mastered, behind, score }) => (
+                  <div key={s} style={{ marginBottom:18 }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", marginBottom:5, alignItems:"center" }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                        <span style={{ fontWeight:800, color:colorFor(s).color, fontSize:12 }}>{s}</span>
+                        <span style={{ color:"#94a3b8", fontSize:10 }}>{total} topics</span>
+                      </div>
+                      <div style={{ display:"flex", gap:5, alignItems:"center" }}>
+                        {behind > 0 && <span style={{ background:"#fee2e2", color:"#dc2626", borderRadius:8, padding:"1px 7px", fontSize:10, fontWeight:700 }}>⚠{behind}</span>}
+                        <span style={{ fontWeight:800, fontSize:14, color: score >= 75 ? "#059669" : score >= 45 ? "#d97706" : "#dc2626" }}>{score}%</span>
+                      </div>
+                    </div>
+                    <div style={{ background:"#f1f5f9", borderRadius:99, height:9, overflow:"hidden" }}>
+                      <div style={{ width:`${score}%`, height:"100%", background:colorFor(s).color, borderRadius:99, transition:"width 1s" }} />
+                    </div>
+                    <div style={{ fontSize:10, color:"#94a3b8", marginTop:3 }}>✓{mastered} mastered · {total} total</div>
+                  </div>
+                ))}
+              </div>
+
+              <div style={card}>
+                <h3 style={{ margin:"0 0 14px", fontSize:14, fontWeight:700 }}>🎯 Focus Now</h3>
+                <div style={{ display:"flex", flexDirection:"column", gap:7, maxHeight:340, overflowY:"auto" }}>
+                  {focusNow.length === 0
+                    ? <div style={{ textAlign:"center", padding:40, color:"#94a3b8" }}>✅ Nothing urgent!</div>
+                    : focusNow.map(t => {
+                        const d = daysFrom(t.target);
+                        const sc = ST[t.status];
+                        return (
+                          <div key={t.id} onClick={() => openEdit(t)}
+                            style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 12px", borderRadius:10, background: d < 0 ? "#fef2f2" : "#f8fafc", border:`1px solid ${d < 0 ? "#fecaca" : "#e2e8f0"}`, cursor:"pointer" }}>
+                            <div style={{ background:sc.bg, color:sc.color, borderRadius:7, width:30, height:30, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, flexShrink:0 }}>{sc.icon}</div>
+                            <div style={{ flex:1, minWidth:0 }}>
+                              <div style={{ fontSize:12, fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{t.topic}</div>
+                              <div style={{ fontSize:10, color:"#64748b" }}>{t.subject} · {fmtDate(t.target)}</div>
+                            </div>
+                            <PriorityPill p={t.priority} />
+                            <div style={{ fontSize:12, fontWeight:800, color: d <= 0 ? "#dc2626" : d <= 3 ? "#d97706" : "#4f46e5", flexShrink:0 }}>
+                              {d <= 0 ? `${Math.abs(d)}d late` : `${d}d`}
+                            </div>
+                          </div>
+                        );
+                    })}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display:"grid", gridTemplateColumns:`repeat(${Math.max(subjectStats.length, 1)},1fr)`, gap:14 }}>
+              {subjectStats.map(({ s, total, mastered, behind, score }) => (
+                <div key={s} onClick={() => { setTSubj(s); setTab("topics"); }}
+                  style={{ background:`linear-gradient(135deg,${colorFor(s).color}18,${colorFor(s).color}05)`, border:`1.5px solid ${colorFor(s).color}30`, borderRadius:16, padding:"18px 20px", cursor:"pointer" }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+                    <div>
+                      <div style={{ fontWeight:800, fontSize:13, color:colorFor(s).color, maxWidth:130 }}>{s}</div>
+                      <div style={{ fontSize:10, color:"#64748b", marginTop:1 }}>{total} topics</div>
+                    </div>
+                    <div style={{ position:"relative", width:56, height:56 }}>
+                      <CircleG pct={score} size={56} w={5} />
+                      <div style={{ position:"absolute", top:"50%", left:"50%", transform:"translate(-50%,-50%)", fontSize:10, fontWeight:800, color:"#1e293b" }}>{score}%</div>
+                    </div>
+                  </div>
+                  <div style={{ display:"flex", gap:6, marginTop:10, flexWrap:"wrap" }}>
+                    <span style={{ background:"#d1fae5", color:"#065f46", borderRadius:6, padding:"2px 8px", fontSize:10, fontWeight:700 }}>✓{mastered}</span>
+                    {behind > 0 && <span style={{ background:"#fee2e2", color:"#991b1b", borderRadius:6, padding:"2px 8px", fontSize:10, fontWeight:700 }}>⚠{behind}</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ══ TOPICS ══ */}
+        {tab === "topics" && (
+          <div>
+            <div style={{ ...card, padding:"14px 18px", marginBottom:16, display:"flex", gap:10, flexWrap:"wrap", alignItems:"center" }}>
+              <input value={tQ} onChange={e => setTQ(e.target.value)} placeholder="🔍 Search topic or subject..." style={{ border:"1px solid #e2e8f0", borderRadius:9, padding:"8px 14px", fontSize:12, flex:1, minWidth:180, outline:"none" }} />
+              <select value={tSubj} onChange={e => setTSubj(e.target.value)} style={{ ...inputStyle, width:"auto", padding:"7px 10px" }}>
+                <option value="ALL">All Subjects</option>
+                {subjects.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+              <div style={{ display:"flex", gap:5, flexWrap:"wrap" }}>
+                {["ALL", "notstarted", "inprogress", "revision", "mastered"].map(s => (
+                  <button key={s} onClick={() => setTSt(s)}
+                    style={{ padding:"6px 11px", borderRadius:7, border:"none", cursor:"pointer", fontSize:10, fontWeight:700, background: tSt === s ? (s === "ALL" ? "#0f172a" : ST[s]?.color) : "#f1f5f9", color: tSt === s ? "#fff" : "#64748b" }}>
+                    {s === "ALL" ? "ALL" : ST[s].label}
+                  </button>
+                ))}
+              </div>
+              <div style={{ display:"flex", gap:5 }}>
+                {["ALL", "High", "Medium", "Low"].map(p => (
+                  <button key={p} onClick={() => setTPri(p)}
+                    style={{ padding:"6px 11px", borderRadius:7, border:"none", cursor:"pointer", fontSize:10, fontWeight:700, background: tPri === p ? (p === "ALL" ? "#0f172a" : PRI[p]?.color) : "#f1f5f9", color: tPri === p ? "#fff" : "#64748b" }}>
+                    {p}
+                  </button>
+                ))}
+              </div>
+              <button onClick={openAdd} style={{ background:"linear-gradient(135deg,#0284c7,#0d9488)", color:"#fff", border:"none", borderRadius:9, padding:"8px 16px", fontSize:12, fontWeight:700, cursor:"pointer", whiteSpace:"nowrap" }}>➕ Add New</button>
+            </div>
+
+            <div style={{ background:"#fffbeb", border:"1px solid #fef3c7", borderRadius:10, padding:"8px 16px", marginBottom:12, fontSize:11, color:"#92400e" }}>
+              💡 <strong>Inline editing:</strong> Click any cell to edit directly. Use ✏️ for a full edit, 🗑️ to delete.
+            </div>
+
+            <div style={{ ...card, padding:0, overflow:"hidden" }}>
+              <div style={{ overflowX:"auto" }}>
+                <table style={{ width:"100%", borderCollapse:"collapse", minWidth:1100 }}>
+                  <thead>
+                    <tr>
+                      {["#", "Subject", "Topic", "Priority", "Target Date", "Days", "Status", "Hrs (done/planned)", "Notes", "Actions"].map((h, i) => (
+                        <TH key={i} center={i >= 5 && i <= 7}>{h}</TH>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtT.map((t, i) => (
+                      <tr key={t.id} style={{ background: i % 2 === 0 ? "#fff" : "#fafbfc" }}>
+                        <td style={{ padding:"10px 12px", borderBottom:"1px solid #f1f5f9", fontSize:11, color:"#94a3b8", fontWeight:600 }}>{i + 1}</td>
+                        <td style={{ padding:"10px 14px", borderBottom:"1px solid #f1f5f9", maxWidth:160 }}>
+                          <EditCell value={t.subject} onChange={v => updateField(t.id, "subject", v)} />
+                        </td>
+                        <td style={{ padding:"10px 14px", borderBottom:"1px solid #f1f5f9", maxWidth:220 }}>
+                          <EditCell value={t.topic} onChange={v => updateField(t.id, "topic", v)} />
+                        </td>
+                        <td style={{ padding:"10px 14px", borderBottom:"1px solid #f1f5f9" }}>
+                          <EditCell value={t.priority} onChange={v => updateField(t.id, "priority", v)} options={Object.keys(PRI).map(p => ({ v:p, l:p }))} />
+                        </td>
+                        <td style={{ padding:"10px 14px", borderBottom:"1px solid #f1f5f9" }}>
+                          <EditCell value={t.target} type="date" onChange={v => updateField(t.id, "target", v)} />
+                        </td>
+                        <td style={{ padding:"10px 14px", borderBottom:"1px solid #f1f5f9", textAlign:"center" }}>
+                          <DaysChip due={t.target} status={t.status} />
+                        </td>
+                        <td style={{ padding:"10px 14px", borderBottom:"1px solid #f1f5f9", textAlign:"center" }}>
+                          <select value={t.status} onChange={e => updateField(t.id, "status", e.target.value)}
+                            style={{ border:"1.5px solid #e2e8f0", borderRadius:7, padding:"4px 8px", fontSize:11, cursor:"pointer", background:ST[t.status]?.bg, color:ST[t.status]?.color, fontWeight:700, outline:"none" }}>
+                            {Object.entries(ST).map(([k, v]) => <option key={k} value={k}>{v.icon} {v.label}</option>)}
+                          </select>
+                        </td>
+                        <td style={{ padding:"10px 14px", borderBottom:"1px solid #f1f5f9", textAlign:"center", fontSize:11 }}>
+                          <EditCell value={t.hoursDone} type="number" onChange={v => updateField(t.id, "hoursDone", v)} /> / <EditCell value={t.hoursPlanned} type="number" onChange={v => updateField(t.id, "hoursPlanned", v)} />
+                        </td>
+                        <td style={{ padding:"10px 14px", borderBottom:"1px solid #f1f5f9", maxWidth:160 }}>
+                          <EditCell value={t.notes} onChange={v => updateField(t.id, "notes", v)} />
+                        </td>
+                        <td style={{ padding:"10px 12px", borderBottom:"1px solid #f1f5f9", textAlign:"center", whiteSpace:"nowrap" }}>
+                          <button onClick={() => openEdit(t)} style={{ background:"#e0f2fe", color:"#0284c7", border:"none", borderRadius:6, padding:"5px 9px", cursor:"pointer", fontSize:13, marginRight:4 }} title="Edit">✏️</button>
+                          <button onClick={() => setDelItem({ kind:"topic", item:t })} style={{ background:"#fef2f2", color:"#dc2626", border:"none", borderRadius:6, padding:"5px 9px", cursor:"pointer", fontSize:13 }} title="Delete">🗑️</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {filtT.length === 0 && (
+                  <div style={{ textAlign:"center", padding:"60px 20px", color:"#94a3b8" }}>
+                    <div style={{ fontSize:32, marginBottom:10 }}>📋</div>
+                    <div style={{ fontSize:14, fontWeight:600, marginBottom:8 }}>No topics found</div>
+                    <button onClick={openAdd} style={{ background:"#0284c7", color:"#fff", border:"none", borderRadius:9, padding:"10px 24px", fontSize:13, fontWeight:700, cursor:"pointer" }}>➕ Add First Topic</button>
+                  </div>
+                )}
+              </div>
+              <div style={{ padding:"10px 16px", background:"#f8fafc", borderTop:"1px solid #e2e8f0", fontSize:11, color:"#94a3b8" }}>
+                Showing {filtT.length} of {topics.length} topics
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ══ MOCK TESTS ══ */}
+        {tab === "mocks" && (
+          <div>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+              <div style={{ display:"flex", gap:14 }}>
+                <div style={{ ...card, padding:"12px 20px" }}>
+                  <div style={{ fontSize:10, color:"#94a3b8", fontWeight:700, textTransform:"uppercase" }}>Average Score</div>
+                  <div style={{ fontSize:24, fontWeight:900, color:avgMock >= 60 ? "#059669" : avgMock >= 40 ? "#d97706" : "#dc2626" }}>{avgMock}%</div>
+                </div>
+                <div style={{ ...card, padding:"12px 20px" }}>
+                  <div style={{ fontSize:10, color:"#94a3b8", fontWeight:700, textTransform:"uppercase" }}>Tests Taken</div>
+                  <div style={{ fontSize:24, fontWeight:900, color:"#0284c7" }}>{mocks.length}</div>
+                </div>
+              </div>
+              <button onClick={openMockAdd} style={{ background:"linear-gradient(135deg,#0284c7,#0d9488)", color:"#fff", border:"none", borderRadius:9, padding:"10px 18px", fontSize:12, fontWeight:700, cursor:"pointer" }}>➕ Add Mock Test</button>
+            </div>
+
+            <div style={{ ...card }}>
+              <h3 style={{ margin:"0 0 16px", fontSize:14, fontWeight:700 }}>📈 Score Trend</h3>
+              {sortedMocks.length === 0 ? (
+                <div style={{ textAlign:"center", padding:30, color:"#94a3b8" }}>No mock tests logged yet</div>
+              ) : (
+                <div style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:24 }}>
+                  {sortedMocks.map(m => {
+                    const pct = Math.round((m.score / m.max) * 100);
+                    return (
+                      <div key={m.id} style={{ display:"flex", alignItems:"center", gap:12 }}>
+                        <div style={{ width:100, fontSize:10, color:"#64748b", flexShrink:0 }}>{fmtDate(m.date)}</div>
+                        <div style={{ flex:1, background:"#f1f5f9", borderRadius:99, height:16, overflow:"hidden" }}>
+                          <div style={{ width:`${pct}%`, height:"100%", background: pct >= 60 ? "#059669" : pct >= 40 ? "#d97706" : "#dc2626", borderRadius:99, transition:"width 1s" }} />
+                        </div>
+                        <div style={{ width:44, fontSize:12, fontWeight:800, color: pct >= 60 ? "#059669" : pct >= 40 ? "#d97706" : "#dc2626", textAlign:"right" }}>{pct}%</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                <thead>
+                  <tr><TH>Test Name</TH><TH>Date</TH><TH center>Score</TH><TH center>%</TH><TH center>Actions</TH></tr>
+                </thead>
+                <tbody>
+                  {sortedMocks.slice().reverse().map((m, i) => {
+                    const pct = Math.round((m.score / m.max) * 100);
+                    return (
+                      <tr key={m.id} style={{ background: i % 2 === 0 ? "#fff" : "#fafbfc" }}>
+                        <td style={{ padding:"10px 14px", borderBottom:"1px solid #f1f5f9", fontWeight:600 }}>{m.name}</td>
+                        <td style={{ padding:"10px 14px", borderBottom:"1px solid #f1f5f9", color:"#64748b" }}>{fmtDate(m.date)}</td>
+                        <td style={{ padding:"10px 14px", borderBottom:"1px solid #f1f5f9", textAlign:"center" }}>{m.score}/{m.max}</td>
+                        <td style={{ padding:"10px 14px", borderBottom:"1px solid #f1f5f9", textAlign:"center", fontWeight:800, color: pct >= 60 ? "#059669" : pct >= 40 ? "#d97706" : "#dc2626" }}>{pct}%</td>
+                        <td style={{ padding:"10px 14px", borderBottom:"1px solid #f1f5f9", textAlign:"center", whiteSpace:"nowrap" }}>
+                          <button onClick={() => openMockEdit(m)} style={{ background:"#e0f2fe", color:"#0284c7", border:"none", borderRadius:6, padding:"5px 9px", cursor:"pointer", fontSize:13, marginRight:4 }}>✏️</button>
+                          <button onClick={() => setDelItem({ kind:"mock", item:m })} style={{ background:"#fef2f2", color:"#dc2626", border:"none", borderRadius:6, padding:"5px 9px", cursor:"pointer", fontSize:13 }}>🗑️</button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* ══ CALENDAR ══ */}
+        {tab === "cal" && (
+          <div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:18 }}>
+              {Array.from({ length: 4 }).map((_, idx) => {
+                const d0 = new Date(); d0.setDate(1); d0.setMonth(d0.getMonth() + idx);
+                const m = d0.getMonth(), y = d0.getFullYear();
+                const label = d0.toLocaleDateString("en-IN", { month:"long", year:"numeric" });
+                const items = topics.filter(x => { const d = new Date(x.target); return d.getMonth() === m && d.getFullYear() === y; }).sort((a, b) => new Date(a.target) - new Date(b.target));
+                return (
+                  <div key={idx} style={card}>
+                    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
+                      <h3 style={{ margin:0, fontSize:15, fontWeight:800, color:"#0f172a" }}>📅 {label}</h3>
+                      <span style={{ background:"#e0f2fe", color:"#0284c7", borderRadius:8, padding:"3px 10px", fontSize:11, fontWeight:700 }}>{items.length} targets</span>
+                    </div>
+                    {items.length === 0 ? (
+                      <div style={{ color:"#94a3b8", textAlign:"center", padding:"24px 0", fontSize:13 }}>No target dates this month</div>
+                    ) : items.map((x, i) => {
+                      const d = new Date(x.target);
+                      const sc = ST[x.status];
+                      return (
+                        <div key={i} onClick={() => openEdit(x)} style={{ display:"flex", gap:12, padding:"10px 8px", borderBottom:"1px solid #f1f5f9", alignItems:"flex-start", cursor:"pointer", borderRadius:8 }}>
+                          <div style={{ flexShrink:0, width:38, textAlign:"center", background:"#f8fafc", borderRadius:8, padding:"4px 0" }}>
+                            <div style={{ fontWeight:900, fontSize:18, color:"#0f172a", lineHeight:1 }}>{d.getDate()}</div>
+                          </div>
+                          <div style={{ flex:1 }}>
+                            <div style={{ fontSize:12, fontWeight:600, color:"#111827" }}>{x.topic}</div>
+                            <div style={{ display:"flex", gap:5, marginTop:4, flexWrap:"wrap" }}>
+                              <SubjectBadge subject={x.subject} />
+                              <span style={{ background:sc.bg, color:sc.color, borderRadius:4, padding:"1px 6px", fontSize:9, fontWeight:700 }}>{sc.icon} {sc.label}</span>
+                            </div>
+                          </div>
+                          <DaysChip due={x.target} status={x.status} />
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ══ REPORT ══ */}
+        {tab === "report" && (
+          <div style={{ maxWidth:880, margin:"0 auto" }}>
+            <div style={{ ...card, padding:0, overflow:"hidden", boxShadow:"0 8px 40px rgba(0,0,0,0.13)" }}>
+              <div style={{ background:"linear-gradient(135deg,#0f172a,#1e3a5f,#164e63)", padding:"48px 56px", textAlign:"center" }}>
+                <div style={{ fontSize:40 }}>📚</div>
+                <div style={{ color:"#fff", fontSize:26, fontWeight:900, marginTop:14, letterSpacing:"-0.5px" }}>EXAM PREPARATION REPORT</div>
+                <div style={{ color:"#7dd3fc", fontSize:14, marginTop:6 }}>{examName}</div>
+                <div style={{ color:"#60a5fa", fontSize:12, marginTop:3 }}>Exam Date: {fmtDate(examDate)} · {daysLeft >= 0 ? `${daysLeft} days remaining` : "Exam complete"}</div>
+                <div style={{ display:"inline-block", marginTop:20, background: readiness >= 75 ? "#059669" : readiness >= 50 ? "#d97706" : "#dc2626", color:"#fff", borderRadius:30, padding:"10px 32px", fontWeight:900, fontSize:22 }}>
+                  Readiness Score: {readiness}%
+                </div>
+              </div>
+              <div style={{ padding:"40px 56px" }}>
+                <h3 style={{ fontSize:13, fontWeight:800, color:"#0f172a", borderBottom:"2px solid #e2e8f0", paddingBottom:8, marginBottom:16 }}>I. SUBJECT-WISE PROGRESS</h3>
+                <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12, marginBottom:32 }}>
+                  <thead>
+                    <tr style={{ background:"#f8fafc" }}>
+                      {["Subject", "Total", "Mastered", "In Progress/Revision", "Not Started", "Score"].map(h => (
+                        <th key={h} style={{ padding:"9px 13px", textAlign: h === "Subject" ? "left" : "center", fontSize:10, fontWeight:700, color:"#64748b", border:"1px solid #e2e8f0" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {subjectStats.map(({ s, total, mastered, score }) => {
+                      const r = topics.filter(x => x.subject === s);
+                      const inprog = r.filter(x => x.status === "inprogress" || x.status === "revision").length;
+                      const notst = r.filter(x => x.status === "notstarted").length;
+                      return (
+                        <tr key={s}>
+                          <td style={{ padding:"9px 13px", border:"1px solid #e2e8f0", fontWeight:800, color:colorFor(s).color }}>{s}</td>
+                          <td style={{ padding:"9px 13px", border:"1px solid #e2e8f0", textAlign:"center" }}>{total}</td>
+                          <td style={{ padding:"9px 13px", border:"1px solid #e2e8f0", textAlign:"center" }}>{mastered}</td>
+                          <td style={{ padding:"9px 13px", border:"1px solid #e2e8f0", textAlign:"center" }}>{inprog}</td>
+                          <td style={{ padding:"9px 13px", border:"1px solid #e2e8f0", textAlign:"center" }}>{notst}</td>
+                          <td style={{ padding:"9px 13px", border:"1px solid #e2e8f0", textAlign:"center", fontWeight:800, color: score >= 75 ? "#059669" : score >= 50 ? "#d97706" : "#dc2626" }}>{score}%</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+
+                {topics.filter(x => x.priority === "High" && x.status !== "mastered").length > 0 && (
+                  <>
+                    <h3 style={{ fontSize:13, fontWeight:800, color:"#dc2626", borderBottom:"2px solid #fee2e2", paddingBottom:8, marginBottom:16 }}>II. HIGH-PRIORITY PENDING TOPICS</h3>
+                    {topics.filter(x => x.priority === "High" && x.status !== "mastered").map(t => (
+                      <div key={t.id} style={{ background:"#fef2f2", border:"1px solid #fecaca", borderRadius:10, padding:"12px 16px", marginBottom:10 }}>
+                        <div style={{ display:"flex", justifyContent:"space-between" }}>
+                          <span style={{ fontWeight:700, fontSize:12, color:"#991b1b" }}>{t.topic}</span>
+                          <SubjectBadge subject={t.subject} />
+                        </div>
+                        <div style={{ fontSize:11, color:"#6b7280", marginTop:3 }}>Target: {fmtDate(t.target)} · {t.notes}</div>
+                      </div>
+                    ))}
+                    <div style={{ marginBottom:24 }} />
+                  </>
+                )}
+
+                <h3 style={{ fontSize:13, fontWeight:800, color:"#0f172a", borderBottom:"2px solid #e2e8f0", paddingBottom:8, marginBottom:16 }}>III. MOCK TEST SUMMARY</h3>
+                {sortedMocks.length === 0 ? <div style={{ color:"#94a3b8", fontSize:12, marginBottom:24 }}>No mock tests logged yet.</div> : (
+                  <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11, marginBottom:24 }}>
+                    <thead>
+                      <tr style={{ background:"#f8fafc" }}>
+                        {["Test", "Date", "Score", "%"].map(h => <th key={h} style={{ padding:"7px 11px", textAlign:"left", fontWeight:700, color:"#64748b", border:"1px solid #e2e8f0", fontSize:10 }}>{h}</th>)}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sortedMocks.map((m, i) => (
+                        <tr key={m.id} style={{ background: i % 2 === 0 ? "#fff" : "#fafbfc" }}>
+                          <td style={{ padding:"7px 11px", border:"1px solid #e2e8f0", fontWeight:600 }}>{m.name}</td>
+                          <td style={{ padding:"7px 11px", border:"1px solid #e2e8f0" }}>{fmtDate(m.date)}</td>
+                          <td style={{ padding:"7px 11px", border:"1px solid #e2e8f0" }}>{m.score}/{m.max}</td>
+                          <td style={{ padding:"7px 11px", border:"1px solid #e2e8f0", fontWeight:700 }}>{Math.round((m.score / m.max) * 100)}%</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+
+                <div style={{ marginTop:24, borderTop:"2px solid #e2e8f0", paddingTop:20, fontSize:11, color:"#94a3b8", textAlign:"center" }}>
+                  Report generated on {fmtDate(todayISO())} · Study hours logged: {hoursLogged}h
+                </div>
+              </div>
+            </div>
+            <div style={{ textAlign:"center", marginTop:18 }}>
+              <button onClick={() => window.print()} style={{ background:"#0f172a", color:"#fff", border:"none", borderRadius:10, padding:"12px 32px", fontSize:13, fontWeight:700, cursor:"pointer" }}>🖨️ Print / Export Report</button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&display=swap');
+        *{box-sizing:border-box;} body{margin:0;}
+        @keyframes slideUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+        select{outline:none;} input:focus{outline:2px solid #0284c7;outline-offset:1px;}
+        ::-webkit-scrollbar{width:5px;height:5px} ::-webkit-scrollbar-track{background:#f1f5f9}
+        ::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:99px}
+        @media print{button{display:none!important}}
+      `}</style>
+    </div>
+  );
+}
